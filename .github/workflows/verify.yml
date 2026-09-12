@@ -11,22 +11,26 @@ permissions:
   contents: read
 
 jobs:
-  verify:
-    name: ${{ matrix.name }}
+  powershell:
+    name: PowerShell 7
     runs-on: windows-latest
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: PowerShell 7
-            shell: pwsh
-          - name: Windows PowerShell 5.1
-            shell: powershell
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Run module verification
-        shell: ${{ matrix.shell }}
+        shell: pwsh
+        run: .\tests\Verify.ps1
+
+  windows-powershell:
+    name: Windows PowerShell 5.1
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run module verification
+        shell: powershell
         run: .\tests\Verify.ps1
