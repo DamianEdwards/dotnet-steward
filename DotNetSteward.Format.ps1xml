@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Configuration>
+  <ViewDefinitions>
+    <View>
+      <Name>DotNetSteward.Installation.Table</Name>
+      <ViewSelectedBy>
+        <TypeName>DotNetSteward.Installation</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader>
+            <Label>Product</Label>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>Version</Label>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>Architecture</Label>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>Managed by</Label>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>Updateable</Label>
+          </TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem>
+                <PropertyName>ProductType</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>Version</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>Architecture</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>ManagementSource</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>IsUpdateable</PropertyName>
+              </TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+  </ViewDefinitions>
+</Configuration>

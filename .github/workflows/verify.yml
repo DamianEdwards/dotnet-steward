@@ -1,0 +1,32 @@
+name: Verify
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: ${{ matrix.name }}
+    runs-on: windows-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: PowerShell 7
+            shell: pwsh
+          - name: Windows PowerShell 5.1
+            shell: powershell
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run module verification
+        shell: ${{ matrix.shell }}
+        run: .\tests\Verify.ps1
