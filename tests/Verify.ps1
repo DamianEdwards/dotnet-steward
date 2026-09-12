@@ -100,6 +100,9 @@ Assert-Condition (
     $privateChecks.Version -eq '10.0.12' -and
     $privateChecks.Architecture -eq 'arm64'
 ) 'The Arm64 Windows Desktop Runtime bundle identity was not parsed correctly.'
+$null = & $module {
+    @(Get-DotNetPayloadInventory -Bundles @())
+}
 
 Write-Host 'Checking the installed-product inventory...'
 $installations = @(Get-DotNetInstallation)

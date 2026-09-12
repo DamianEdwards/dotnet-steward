@@ -439,6 +439,7 @@ function Resolve-DotNetPayloadVersion {
 function Get-DotNetPayloadInventory {
     param(
         [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
         [object[]] $Bundles
     )
 
