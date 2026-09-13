@@ -17,11 +17,50 @@ payloads remain visible in the inventory but are deliberately read-only.
 
 Daily builds and archive-based installations are not currently supported.
 
-## Import from source
+## Install
+
+Install DotNetSteward from the PowerShell Gallery for the current user:
+
+```powershell
+Install-PSResource DotNetSteward -Scope CurrentUser -TrustRepository
+```
+
+PowerShell automatically imports the module when you use one of its commands.
+To update an existing installation:
+
+```powershell
+Update-PSResource DotNetSteward
+```
+
+When developing or testing the module from a repository checkout, import the
+manifest directly instead:
 
 ```powershell
 Import-Module .\DotNetSteward.psd1
 ```
+
+## Not using Windows?
+
+DotNetSteward manages Windows installer-based .NET installations and does not
+run on macOS or Linux. Use [`dotnetup`](https://aka.ms/dotnetup) instead for
+cross-platform, user-level installation and management of .NET SDKs and
+runtimes.
+
+Install `dotnetup` on macOS or Linux:
+
+```bash
+curl -fsSL https://aka.ms/dotnetup/get-dotnetup.sh | bash
+```
+
+Then follow the printed `PATH` instructions, open a new terminal, and run:
+
+```text
+dotnetup init
+```
+
+The interactive setup lets you select a stable, LTS, preview, major-version,
+feature-band, or exact-version SDK channel and choose how the managed .NET
+installation is exposed to your shell.
 
 ## Inventory
 
