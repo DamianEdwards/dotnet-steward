@@ -1,6 +1,9 @@
 [CmdletBinding()]
 param(
-    [switch] $SkipOnlineChecks
+    [switch] $SkipOnlineChecks,
+
+    [ValidateScript({ Test-Path -LiteralPath $_ -PathType Container })]
+    [string] $ModuleRoot
 )
 
 Set-StrictMode -Version Latest
@@ -21,12 +24,17 @@ function Assert-Condition {
 }
 
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
-$manifestPath = Join-Path $repositoryRoot 'DotNetSteward.psd1'
-$modulePath = Join-Path $repositoryRoot 'DotNetSteward.psm1'
+$resolvedModuleRoot = if ($PSBoundParameters.ContainsKey('ModuleRoot')) {
+    (Resolve-Path -LiteralPath $ModuleRoot).Path
+}
+else {
+    $repositoryRoot
+}
+$manifestPath = Join-Path $resolvedModuleRoot 'DotNetSteward.psd1'
 
 Write-Host 'Checking PowerShell syntax...'
 $powerShellFiles = @(
-    Get-ChildItem -LiteralPath $repositoryRoot -Recurse -File |
+    Get-ChildItem -LiteralPath $resolvedModuleRoot -Recurse -File |
         Where-Object Extension -in @('.ps1', '.psd1', '.psm1')
 )
 foreach ($file in $powerShellFiles) {
@@ -43,6 +51,11 @@ foreach ($file in $powerShellFiles) {
         })
         throw ($messages -join [Environment]::NewLine)
     }
+}
+
+if (-not $PSBoundParameters.ContainsKey('ModuleRoot')) {
+    Write-Host 'Checking release automation...'
+    & (Join-Path $PSScriptRoot 'Verify-ReleaseAutomation.ps1')
 }
 
 Write-Host 'Checking the module manifest and exports...'

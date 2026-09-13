@@ -1,5 +1,7 @@
 # DotNetSteward
 
+[![Verify](https://github.com/DamianEdwards/dotnet-steward/actions/workflows/verify.yml/badge.svg)](https://github.com/DamianEdwards/dotnet-steward/actions/workflows/verify.yml)
+
 DotNetSteward is a Windows PowerShell module for inventorying and updating
 official Microsoft .NET SDK and runtime installations managed by Windows
 installers.
@@ -17,7 +19,22 @@ payloads remain visible in the inventory but are deliberately read-only.
 
 Daily builds and archive-based installations are not currently supported.
 
-## Import from source
+## Installation
+
+After the first release is published, install from PowerShell Gallery with
+PSResourceGet:
+
+```powershell
+Install-PSResource DotNetSteward
+```
+
+PowerShellGet is also supported:
+
+```powershell
+Install-Module DotNetSteward
+```
+
+To import directly from a source checkout:
 
 ```powershell
 Import-Module .\DotNetSteward.psd1
@@ -111,6 +128,9 @@ Run verification locally with either supported PowerShell edition:
 ```powershell
 .\tests\Verify.ps1
 ```
+
+Release versioning, optional signing, provenance, and repository configuration
+are documented in [docs/release-and-provenance.md](docs/release-and-provenance.md).
 
 ## License
 

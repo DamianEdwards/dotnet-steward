@@ -1,0 +1,212 @@
+name: Start Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_bump:
+        description: Version bump when a new base version is needed
+        required: true
+        default: auto
+        type: choice
+        options:
+          - auto
+          - patch
+          - minor
+          - major
+      phase:
+        description: Release phase
+        required: true
+        default: default
+        type: choice
+        options:
+          - default
+          - pre
+          - rc
+          - rtm
+
+concurrency:
+  group: dotnet-steward-release
+  cancel-in-progress: false
+
+jobs:
+  start:
+    name: Version, validate, and tag
+    runs-on: windows-latest
+    timeout-minutes: 20
+    environment: production
+    permissions:
+      actions: write
+      contents: write
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Validate release context
+        shell: pwsh
+        env:
+          PSGALLERY_API_KEY: ${{ secrets.PSGALLERY_API_KEY }}
+        run: |
+          if ($env:GITHUB_REF -ne 'refs/heads/main') {
+              throw 'Start Release must be dispatched from main.'
+          }
+          if ([string]::IsNullOrWhiteSpace($env:PSGALLERY_API_KEY)) {
+              throw 'The production environment must define PSGALLERY_API_KEY.'
+          }
+
+      - name: Calculate release version
+        id: version
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_VERSION_BUMP: ${{ inputs.version_bump }}
+          REQUESTED_PHASE: ${{ inputs.phase }}
+          DEFAULT_VERSION_BUMP: ${{ vars.DEFAULT_VERSION_BUMP }}
+          DEFAULT_RELEASE_PHASE: ${{ vars.DEFAULT_RELEASE_PHASE }}
+        run: |
+          $releasesJson = gh release list `
+              --repo '${{ github.repository }}' `
+              --json tagName,isDraft `
+              --limit 1000
+          if ($LASTEXITCODE -ne 0) {
+              throw 'Could not read existing GitHub releases.'
+          }
+          $releases = @($releasesJson | ConvertFrom-Json)
+          $releaseVersions = @($releases |
+              Where-Object { -not $_.isDraft } |
+              ForEach-Object { $_.tagName })
+          $tagVersions = @(git tag --list 'v*')
+          if ($LASTEXITCODE -ne 0) {
+              throw 'Could not read existing release tags.'
+          }
+          $existingVersions = @(
+              $releaseVersions + $tagVersions |
+                  Sort-Object -Unique
+          )
+
+          $manifest = Import-PowerShellDataFile .\DotNetSteward.psd1
+          $initialVersion = [string] $manifest.ModuleVersion
+          if ($manifest.PrivateData.PSData.ContainsKey('Prerelease') -and
+              -not [string]::IsNullOrWhiteSpace(
+                  [string] $manifest.PrivateData.PSData.Prerelease
+              )) {
+              $initialVersion += "-$($manifest.PrivateData.PSData.Prerelease)"
+          }
+
+          $defaultBump = $env:DEFAULT_VERSION_BUMP
+          if ([string]::IsNullOrWhiteSpace($defaultBump)) {
+              $defaultBump = 'patch'
+          }
+          $defaultPhase = $env:DEFAULT_RELEASE_PHASE
+          if ([string]::IsNullOrWhiteSpace($defaultPhase)) {
+              $defaultPhase = 'rtm'
+          }
+
+          $result = .\scripts\Get-NextReleaseVersion.ps1 `
+              -ExistingVersion $existingVersions `
+              -InitialVersion $initialVersion `
+              -VersionBump $env:REQUESTED_VERSION_BUMP `
+              -Phase $env:REQUESTED_PHASE `
+              -DefaultVersionBump $defaultBump `
+              -DefaultPhase $defaultPhase
+
+          "version=$($result.Version)" >> $env:GITHUB_OUTPUT
+          "is_prerelease=$($result.IsPrerelease.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+
+          '## Release version' >> $env:GITHUB_STEP_SUMMARY
+          "- **Version:** ``$($result.Version)``" >> $env:GITHUB_STEP_SUMMARY
+          "- **Phase:** ``$($result.Phase)``" >> $env:GITHUB_STEP_SUMMARY
+          "- **Base bump:** ``$($result.VersionBump)``" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Set module version
+        shell: pwsh
+        run: |
+          .\scripts\Set-ModuleVersion.ps1 `
+              -ManifestPath .\DotNetSteward.psd1 `
+              -Version '${{ steps.version.outputs.version }}'
+
+      - name: Install release packaging tools
+        shell: pwsh
+        run: |
+          $available = Get-Module -ListAvailable Microsoft.PowerShell.PSResourceGet |
+              Sort-Object Version -Descending |
+              Select-Object -First 1
+          if ($null -eq $available -or $available.Version -lt [version] '1.1.0') {
+              Install-Module Microsoft.PowerShell.PSResourceGet `
+                  -MinimumVersion 1.1.0 `
+                  -Repository PSGallery `
+                  -Scope CurrentUser `
+                  -Force `
+                  -AllowClobber
+          }
+
+      - name: Verify release source with PowerShell 7
+        shell: pwsh
+        env:
+          DOTNET_STEWARD_REQUIRE_PACKAGING_TESTS: true
+        run: .\tests\Verify.ps1
+
+      - name: Verify release source with Windows PowerShell 5.1
+        shell: powershell
+        run: .\tests\Verify.ps1
+
+      - name: Commit version and create immutable tag
+        id: tag
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $tag = "v$env:VERSION"
+          $existingTag = @(git ls-remote --tags origin "refs/tags/$tag")
+          if ($LASTEXITCODE -ne 0) {
+              throw 'Could not query existing release tags.'
+          }
+          if ($existingTag.Count -gt 0) {
+              throw "Tag '$tag' already exists. Resume Finalize Release on that tag instead."
+          }
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add DotNetSteward.psd1
+          $changedFiles = @(git diff --cached --name-only)
+          if ($changedFiles.Count -gt 0) {
+              git commit -m "Set module version to $env:VERSION"
+              if ($LASTEXITCODE -ne 0) {
+                  throw 'Could not commit the module version.'
+              }
+          }
+
+          $sourceCommit = (git rev-parse HEAD).Trim()
+          git push origin HEAD:main
+          if ($LASTEXITCODE -ne 0) {
+              throw 'Could not push the version commit to main.'
+          }
+          git tag -a $tag $sourceCommit -m "Release $tag"
+          git push origin $tag
+          if ($LASTEXITCODE -ne 0) {
+              throw "Could not publish tag '$tag'."
+          }
+
+          "source_commit=$sourceCommit" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+
+      - name: Dispatch release finalizer
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run release.yml `
+              --repo '${{ github.repository }}' `
+              --ref '${{ steps.tag.outputs.tag }}' `
+              -f version='${{ steps.version.outputs.version }}' `
+              -f source_commit='${{ steps.tag.outputs.source_commit }}'
+          if ($LASTEXITCODE -ne 0) {
+              throw 'The release tag was created, but Finalize Release could not be dispatched. Run it manually on the new tag.'
+          }
+
+          '## Release started' >> $env:GITHUB_STEP_SUMMARY
+          "- **Tag:** ``${{ steps.tag.outputs.tag }}``" >> $env:GITHUB_STEP_SUMMARY
+          "- **Source commit:** ``${{ steps.tag.outputs.source_commit }}``" >> $env:GITHUB_STEP_SUMMARY
