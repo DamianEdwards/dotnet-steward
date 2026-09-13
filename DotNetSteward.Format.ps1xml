@@ -2,6 +2,52 @@
 <Configuration>
   <ViewDefinitions>
     <View>
+      <Name>DotNetSteward.AvailableRelease.Table</Name>
+      <ViewSelectedBy>
+        <TypeName>DotNetSteward.AvailableRelease</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader>
+            <Label>Product</Label>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>Version</Label>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>Architecture</Label>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>Support</Label>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>Release type</Label>
+          </TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem>
+                <PropertyName>ProductType</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>Version</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>Architecture</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>SupportPhase</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>ReleaseType</PropertyName>
+              </TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+    <View>
       <Name>DotNetSteward.Installation.Table</Name>
       <ViewSelectedBy>
         <TypeName>DotNetSteward.Installation</TypeName>

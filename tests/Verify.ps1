@@ -69,7 +69,11 @@ $module = Get-Module DotNetSteward
 Assert-Condition ($null -ne $module) 'DotNetSteward did not import.'
 
 $expectedExports = @(
+    'Find-DotNetRuntime'
+    'Find-DotNetSdk'
     'Get-DotNetInstallation'
+    'Install-DotNetRuntime'
+    'Install-DotNetSdk'
     'Update-DotNetRuntime'
     'Update-DotNetSdk'
 )
@@ -100,6 +104,12 @@ $privateChecks = & $module {
         ProductType = $identity.ProductType
         Version = $identity.Version
         Architecture = $identity.Architecture
+        ModernSignerAllowed = $script:ExpectedSignerSubjects.ContainsKey(
+            'CN=.NET, O=Microsoft Corporation, L=Redmond, S=Washington, C=US'
+        )
+        LegacySignerAllowed = $script:ExpectedSignerSubjects.ContainsKey(
+            'CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US'
+        )
     }
 }
 Assert-Condition $privateChecks.NumericPrereleaseOrder `
@@ -113,9 +123,185 @@ Assert-Condition (
     $privateChecks.Version -eq '10.0.12' -and
     $privateChecks.Architecture -eq 'arm64'
 ) 'The Arm64 Windows Desktop Runtime bundle identity was not parsed correctly.'
+Assert-Condition (
+    $privateChecks.ModernSignerAllowed -and $privateChecks.LegacySignerAllowed
+) 'The expected modern and legacy Microsoft installer signers are not configured.'
 $null = & $module {
     @(Get-DotNetPayloadInventory -Bundles @())
 }
+
+Write-Host 'Checking release discovery and fresh-install planning...'
+$releaseDiscoveryChecks = & $module {
+    function Get-ReleaseIndex {
+        @(
+            [pscustomobject] @{
+                'channel-version' = '11.0'
+                'support-phase' = 'preview'
+                'release-type' = 'sts'
+            }
+            [pscustomobject] @{
+                'channel-version' = '8.0'
+                'support-phase' = 'active'
+                'release-type' = 'lts'
+            }
+        )
+    }
+
+    function New-SyntheticInstaller {
+        param(
+            [string] $Version,
+            [string] $Rid,
+            [string] $ProductType = 'Sdk'
+        )
+
+        [pscustomobject] @{
+            ProductType = $ProductType
+            ProductLabel = Get-DotNetProductLabel -ProductType $ProductType
+            Version = $Version
+            VersionInfo = New-SdkVersionInfo -Text $Version
+            Rid = $Rid
+            Url = "https://example.invalid/$ProductType/$Version/$Rid.exe"
+            Hash = ('A' * 128) -join ''
+            HashAlgorithm = 'SHA512'
+        }
+    }
+
+    function Get-ChannelSdkInstallers {
+        param(
+            [object] $ChannelEntry,
+            [string] $Rid,
+            [hashtable] $MetadataCache
+        )
+
+        if ($ChannelEntry.'channel-version' -eq '11.0') {
+            return @(
+                New-SyntheticInstaller -Version '11.0.100-preview.7' -Rid $Rid
+                New-SyntheticInstaller -Version '11.0.100-rc.1' -Rid $Rid
+            )
+        }
+
+        return @(
+            New-SyntheticInstaller -Version '8.0.100' -Rid $Rid
+            New-SyntheticInstaller -Version '8.0.199' -Rid $Rid
+            New-SyntheticInstaller -Version '8.0.200-preview.1' -Rid $Rid
+            New-SyntheticInstaller -Version '8.0.200' -Rid $Rid
+        )
+    }
+
+    function Get-ChannelRuntimeInstallers {
+        param(
+            [object] $ChannelEntry,
+            [string] $Rid,
+            [string] $ProductType,
+            [hashtable] $MetadataCache
+        )
+
+        if ($ChannelEntry.'channel-version' -eq '11.0') {
+            return @(
+                New-SyntheticInstaller -Version '11.0.0-preview.7' `
+                    -Rid $Rid -ProductType $ProductType
+                New-SyntheticInstaller -Version '11.0.0-rc.1' `
+                    -Rid $Rid -ProductType $ProductType
+            )
+        }
+
+        return @(
+            New-SyntheticInstaller -Version '8.0.1' -Rid $Rid `
+                -ProductType $ProductType
+            New-SyntheticInstaller -Version '8.0.2' -Rid $Rid `
+                -ProductType $ProductType
+        )
+    }
+
+    $defaultSdks = @(Find-DotNetSdk -Architecture x64)
+    $previewSdk = @(
+        Find-DotNetSdk -Channel 11.0 -Architecture x64 -IncludePreview
+    )
+    $stablePreviewChannel = @(
+        Find-DotNetSdk -Channel 11.0 -Architecture x64
+    )
+    $bandSdk = @(
+        Find-DotNetSdk -VersionBand 8.0.1xx -Architecture x64
+    )
+    $allStableSdks = @(
+        Find-DotNetSdk -Channel 8.0 -Architecture x64 -AllVersions
+    )
+    $exactPreviewSdks = @(
+        Find-DotNetSdk -Version 11.0.100-preview.7 -Architecture x64
+    )
+    $multipleExactSdks = @(
+        Find-DotNetSdk -Version 8.0.100, 8.0.199 -Architecture x64
+    )
+    $runtimeProducts = @(
+        Find-DotNetRuntime -Channel 8.0 -Architecture x64
+    )
+
+    $sdkInstallPlanned = $true
+    $runtimeInstallPlanned = $true
+    try {
+        Install-DotNetSdk -Version 8.0.100 -Architecture x64 -WhatIf
+    }
+    catch {
+        $sdkInstallPlanned = $false
+    }
+    try {
+        Install-DotNetRuntime -ProductType WindowsDesktopRuntime `
+            -Channel 8.0 -Architecture x64 -WhatIf
+    }
+    catch {
+        $runtimeInstallPlanned = $false
+    }
+
+    [pscustomobject] @{
+        DefaultSdkVersions = @($defaultSdks.Version)
+        PreviewSdkVersion = $previewSdk.Version
+        StablePreviewChannelCount = $stablePreviewChannel.Count
+        BandSdkVersion = $bandSdk.Version
+        AllStableSdkVersions = @($allStableSdks.Version)
+        ExactPreviewSdkVersion = $exactPreviewSdks.Version
+        MultipleExactSdkCount = $multipleExactSdks.Count
+        RuntimeProductTypes = @($runtimeProducts.ProductType)
+        AvailableReleaseTypeName = $defaultSdks[0].PSTypeNames[0]
+        SdkInstallPlanned = $sdkInstallPlanned
+        RuntimeInstallPlanned = $runtimeInstallPlanned
+    }
+}
+Assert-Condition (
+    @($releaseDiscoveryChecks.DefaultSdkVersions).Count -eq 1 -and
+    $releaseDiscoveryChecks.DefaultSdkVersions[0] -eq '8.0.200'
+) 'Default SDK discovery did not return the latest stable SDK per channel.'
+Assert-Condition (
+    $releaseDiscoveryChecks.PreviewSdkVersion -eq '11.0.100-rc.1' -and
+    $releaseDiscoveryChecks.StablePreviewChannelCount -eq 0
+) 'SDK prerelease filtering did not behave as expected.'
+Assert-Condition ($releaseDiscoveryChecks.BandSdkVersion -eq '8.0.199') `
+    'SDK feature-band discovery did not select the latest matching release.'
+Assert-Condition (
+    @($releaseDiscoveryChecks.AllStableSdkVersions).Count -eq 3 -and
+    $releaseDiscoveryChecks.AllStableSdkVersions -notcontains '8.0.200-preview.1'
+) 'AllVersions did not return every stable SDK release.'
+Assert-Condition (
+    $releaseDiscoveryChecks.ExactPreviewSdkVersion -eq
+        '11.0.100-preview.7'
+) 'Exact prerelease SDK discovery incorrectly required IncludePreview.'
+Assert-Condition ($releaseDiscoveryChecks.MultipleExactSdkCount -eq 2) `
+    'Exact SDK discovery collapsed multiple versions in the same channel.'
+Assert-Condition (
+    @($releaseDiscoveryChecks.RuntimeProductTypes).Count -eq 3 -and
+    $releaseDiscoveryChecks.RuntimeProductTypes -contains 'Runtime' -and
+    $releaseDiscoveryChecks.RuntimeProductTypes -contains
+        'AspNetCoreRuntime' -and
+    $releaseDiscoveryChecks.RuntimeProductTypes -contains
+        'WindowsDesktopRuntime'
+) 'Runtime discovery did not return every runtime product by default.'
+Assert-Condition (
+    $releaseDiscoveryChecks.AvailableReleaseTypeName -eq
+        'DotNetSteward.AvailableRelease'
+) 'Available releases do not have the expected PowerShell type name.'
+Assert-Condition (
+    $releaseDiscoveryChecks.SdkInstallPlanned -and
+    $releaseDiscoveryChecks.RuntimeInstallPlanned
+) 'Fresh-install target planning failed under WhatIf.'
 
 Write-Host 'Checking the installed-product inventory...'
 $installations = @(Get-DotNetInstallation)

@@ -1,4 +1,4 @@
-function Install-DotNetUpdates {
+function Install-DotNetCandidates {
     param(
         [Parameter(Mandatory = $true)]
         [object[]] $Candidates,
@@ -63,11 +63,14 @@ function Invoke-DotNetInstallerPlan {
         [object[]] $Candidates,
 
         [Parameter(Mandatory = $true)]
-        [bool] $ShowInstallerUi
+        [bool] $ShowInstallerUi,
+
+        [ValidateSet('updates', 'installations')]
+        [string] $CompletionSubject = 'updates'
     )
 
     $downloadDirectory = Join-Path ([IO.Path]::GetTempPath()) (
-        'update-dotnet-{0}' -f [guid]::NewGuid().ToString('N')
+        'dotnet-steward-{0}' -f [guid]::NewGuid().ToString('N')
     )
     [void] (New-Item -Path $downloadDirectory -ItemType Directory)
 
@@ -80,15 +83,15 @@ function Invoke-DotNetInstallerPlan {
             Write-Host "  $($candidate.ProductLabel) $($candidate.TargetVersion) ($($candidate.Rid)): valid signature from $($trust.SignerSubject)"
         }
 
-        $restartRequired = Install-DotNetUpdates -Candidates $Candidates `
+        $restartRequired = Install-DotNetCandidates -Candidates $Candidates `
             -ShowInstallerUi $ShowInstallerUi
 
         Write-Host ''
         if ($restartRequired) {
-            Write-Host 'Selected .NET updates were installed. Restart Windows to complete all changes.'
+            Write-Host "Selected .NET $CompletionSubject were installed. Restart Windows to complete all changes."
         }
         else {
-            Write-Host 'Selected .NET updates were installed successfully.'
+            Write-Host "Selected .NET $CompletionSubject were installed successfully."
         }
     }
     finally {

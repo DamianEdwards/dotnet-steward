@@ -54,19 +54,22 @@ function Get-ReleasesUri {
     throw "The release-index entry for .NET $channel did not provide a releases metadata URI."
 }
 
-function Get-ChannelSdkInstallers {
+function Get-ChannelReleaseMetadata {
     param(
         [Parameter(Mandatory = $true)]
         [object] $ChannelEntry,
 
-        [Parameter(Mandatory = $true)]
-        [string] $Rid
+        [AllowNull()]
+        [hashtable] $Cache
     )
 
     $channel = [string] $ChannelEntry.PSObject.Properties['channel-version'].Value
     $releasesUri = Get-ReleasesUri -ChannelEntry $ChannelEntry
-    Write-Host "  Reading .NET $channel releases..."
+    if ($null -ne $Cache -and $Cache.ContainsKey($releasesUri)) {
+        return $Cache[$releasesUri]
+    }
 
+    Write-Host "  Reading .NET $channel releases..."
     $metadata = Invoke-RestMethod -Uri $releasesUri -Method Get -Headers @{
         Accept = 'application/json'
         'User-Agent' = 'DotNetSteward'
@@ -77,7 +80,33 @@ function Get-ChannelSdkInstallers {
         throw "Release metadata for .NET $channel did not contain a releases collection."
     }
 
-    $installerName = "dotnet-sdk-$Rid.exe"
+    if ($null -ne $Cache) {
+        $Cache[$releasesUri] = $metadata
+    }
+
+    return $metadata
+}
+
+function Get-ChannelSdkInstallers {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object] $ChannelEntry,
+
+        [Parameter(Mandatory = $true)]
+        [string] $Rid,
+
+        [AllowNull()]
+        [hashtable] $MetadataCache
+    )
+
+    $metadata = Get-ChannelReleaseMetadata -ChannelEntry $ChannelEntry `
+        -Cache $MetadataCache
+    $releasesProperty = $metadata.PSObject.Properties['releases']
+
+    $installerNames = @(
+        "dotnet-sdk-$Rid.exe"
+        "dotnet-dev-$Rid.exe"
+    )
     $byVersion = @{}
 
     foreach ($release in @($releasesProperty.Value)) {
@@ -115,7 +144,7 @@ function Get-ChannelSdkInstallers {
                 $nameProperty = $_.PSObject.Properties['name']
                 $null -ne $ridProperty -and $null -ne $nameProperty -and
                     [string] $ridProperty.Value -eq $Rid -and
-                    [string] $nameProperty.Value -eq $installerName
+                    $installerNames -contains [string] $nameProperty.Value
             })
 
             if ($matchingFiles.Count -eq 0) {
@@ -129,8 +158,10 @@ function Get-ChannelSdkInstallers {
             $file = $matchingFiles[0]
             $urlProperty = $file.PSObject.Properties['url']
             $hashProperty = $file.PSObject.Properties['hash']
-            if ($null -eq $urlProperty -or $null -eq $hashProperty) {
-                throw "Release metadata for SDK $($versionInfo.Text) has an incomplete installer entry."
+            if ($null -eq $urlProperty -or $null -eq $hashProperty -or
+                [string]::IsNullOrWhiteSpace([string] $hashProperty.Value)) {
+                Write-Verbose "Skipping SDK $($versionInfo.Text) because its Windows installer metadata does not include a hash."
+                continue
             }
 
             $url = [uri] ([string] $urlProperty.Value)
@@ -139,8 +170,8 @@ function Get-ChannelSdkInstallers {
                 throw "Installer URI '$url' for SDK $($versionInfo.Text) is not an absolute HTTPS URI."
             }
 
-            if ($hash -notmatch '^[0-9A-F]{128}$') {
-                throw "Release metadata for SDK $($versionInfo.Text) has an invalid SHA-512 hash."
+            if ($hash -notmatch '^(?:[0-9A-F]{64}|[0-9A-F]{128})$') {
+                throw "Release metadata for SDK $($versionInfo.Text) has an invalid SHA-256 or SHA-512 hash."
             }
 
             $installer = [pscustomobject] @{
@@ -149,6 +180,12 @@ function Get-ChannelSdkInstallers {
                 Rid = $Rid
                 Url = $url.AbsoluteUri
                 Hash = $hash
+                HashAlgorithm = if ($hash.Length -eq 128) {
+                    'SHA512'
+                }
+                else {
+                    'SHA256'
+                }
             }
 
             if ($byVersion.ContainsKey($versionInfo.Text)) {
@@ -191,7 +228,10 @@ function Get-ChannelRuntimeInstallers {
 
         [Parameter(Mandatory = $true)]
         [ValidateSet('Runtime', 'AspNetCoreRuntime', 'WindowsDesktopRuntime')]
-        [string] $ProductType
+        [string] $ProductType,
+
+        [AllowNull()]
+        [hashtable] $MetadataCache
     )
 
     $componentPropertyName = switch ($ProductType) {
@@ -199,24 +239,21 @@ function Get-ChannelRuntimeInstallers {
         'AspNetCoreRuntime' { 'aspnetcore-runtime' }
         'WindowsDesktopRuntime' { 'windowsdesktop' }
     }
-    $installerName = switch ($ProductType) {
-        'Runtime' { "dotnet-runtime-$Rid.exe" }
-        'AspNetCoreRuntime' { "aspnetcore-runtime-$Rid.exe" }
-        'WindowsDesktopRuntime' { "windowsdesktop-runtime-$Rid.exe" }
+    $installerNames = switch ($ProductType) {
+        'Runtime' {
+            @(
+                "dotnet-runtime-$Rid.exe"
+                "dotnet-$Rid.exe"
+            )
+        }
+        'AspNetCoreRuntime' { @("aspnetcore-runtime-$Rid.exe") }
+        'WindowsDesktopRuntime' { @("windowsdesktop-runtime-$Rid.exe") }
     }
     $productLabel = Get-DotNetProductLabel -ProductType $ProductType
     $channel = [string] $ChannelEntry.PSObject.Properties['channel-version'].Value
-    $releasesUri = Get-ReleasesUri -ChannelEntry $ChannelEntry
-    Write-Host "  Reading .NET $channel releases for $productLabel..."
-
-    $metadata = Invoke-RestMethod -Uri $releasesUri -Method Get -Headers @{
-        Accept = 'application/json'
-        'User-Agent' = 'DotNetSteward'
-    }
+    $metadata = Get-ChannelReleaseMetadata -ChannelEntry $ChannelEntry `
+        -Cache $MetadataCache
     $releasesProperty = $metadata.PSObject.Properties['releases']
-    if ($null -eq $releasesProperty) {
-        throw "Release metadata for .NET $channel did not contain a releases collection."
-    }
 
     $byVersion = @{}
     foreach ($release in @($releasesProperty.Value)) {
@@ -244,7 +281,7 @@ function Get-ChannelRuntimeInstallers {
             $nameProperty = $_.PSObject.Properties['name']
             $null -ne $ridProperty -and $null -ne $nameProperty -and
                 [string] $ridProperty.Value -eq $Rid -and
-                [string] $nameProperty.Value -eq $installerName
+                $installerNames -contains [string] $nameProperty.Value
         })
         if ($matchingFiles.Count -eq 0) {
             continue
@@ -256,8 +293,10 @@ function Get-ChannelRuntimeInstallers {
         $file = $matchingFiles[0]
         $urlProperty = $file.PSObject.Properties['url']
         $hashProperty = $file.PSObject.Properties['hash']
-        if ($null -eq $urlProperty -or $null -eq $hashProperty) {
-            throw "Release metadata for $productLabel $($versionInfo.Text) has an incomplete installer entry."
+        if ($null -eq $urlProperty -or $null -eq $hashProperty -or
+            [string]::IsNullOrWhiteSpace([string] $hashProperty.Value)) {
+            Write-Verbose "Skipping $productLabel $($versionInfo.Text) because its Windows installer metadata does not include a hash."
+            continue
         }
 
         $url = [uri] ([string] $urlProperty.Value)
@@ -265,8 +304,8 @@ function Get-ChannelRuntimeInstallers {
         if (-not $url.IsAbsoluteUri -or $url.Scheme -ne 'https') {
             throw "Installer URI '$url' for $productLabel $($versionInfo.Text) is not an absolute HTTPS URI."
         }
-        if ($hash -notmatch '^[0-9A-F]{128}$') {
-            throw "Release metadata for $productLabel $($versionInfo.Text) has an invalid SHA-512 hash."
+        if ($hash -notmatch '^(?:[0-9A-F]{64}|[0-9A-F]{128})$') {
+            throw "Release metadata for $productLabel $($versionInfo.Text) has an invalid SHA-256 or SHA-512 hash."
         }
 
         $installer = [pscustomobject] @{
@@ -277,6 +316,12 @@ function Get-ChannelRuntimeInstallers {
             Rid = $Rid
             Url = $url.AbsoluteUri
             Hash = $hash
+            HashAlgorithm = if ($hash.Length -eq 128) {
+                'SHA512'
+            }
+            else {
+                'SHA256'
+            }
         }
         if ($byVersion.ContainsKey($versionInfo.Text)) {
             $existing = $byVersion[$versionInfo.Text]
@@ -300,6 +345,21 @@ function Get-SupportPhase {
 
     $property = $ChannelEntry.PSObject.Properties['support-phase']
     if ($null -eq $property) {
+        return 'unknown'
+    }
+
+    return [string] $property.Value
+}
+
+function Get-ReleaseType {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object] $ChannelEntry
+    )
+
+    $property = $ChannelEntry.PSObject.Properties['release-type']
+    if ($null -eq $property -or
+        [string]::IsNullOrWhiteSpace([string] $property.Value)) {
         return 'unknown'
     }
 
