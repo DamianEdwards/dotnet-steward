@@ -1,5 +1,6 @@
 *.nupkg
 *.zip
+/artifacts/
 TestResults/
 .idea/
 .vscode/

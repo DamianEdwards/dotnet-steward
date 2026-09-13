@@ -27,10 +27,27 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Install release packaging tools
+        shell: pwsh
+        run: |
+          $available = Get-Module -ListAvailable Microsoft.PowerShell.PSResourceGet |
+              Sort-Object Version -Descending |
+              Select-Object -First 1
+          if ($null -eq $available -or $available.Version -lt [version] '1.1.0') {
+              Install-Module Microsoft.PowerShell.PSResourceGet `
+                  -MinimumVersion 1.1.0 `
+                  -Repository PSGallery `
+                  -Scope CurrentUser `
+                  -Force `
+                  -AllowClobber
+          }
 
       - name: Run module verification
         shell: pwsh
+        env:
+          DOTNET_STEWARD_REQUIRE_PACKAGING_TESTS: true
         run: .\tests\Verify.ps1
 
   windows-powershell:
@@ -39,7 +56,7 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 
       - name: Run module verification
         shell: powershell

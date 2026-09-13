@@ -149,6 +149,7 @@ function Get-UpdateCandidates {
             SupportPhase = Get-SupportPhase -ChannelEntry $channelEntry
             Url = $target.Url
             Hash = $target.Hash
+            HashAlgorithm = $target.HashAlgorithm
             Rid = $target.Rid
         })
     }
@@ -280,6 +281,7 @@ function Get-RuntimeUpdateCandidates {
             SupportPhase = Get-SupportPhase -ChannelEntry $channelEntry
             Url = $target.Url
             Hash = $target.Hash
+            HashAlgorithm = $target.HashAlgorithm
             Rid = $target.Rid
         })
     }

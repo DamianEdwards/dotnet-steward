@@ -4,9 +4,29 @@ function Assert-InstallerTrust {
         [object] $Candidate
     )
 
-    $actualHash = (Get-FileHash -LiteralPath $Candidate.InstallerPath -Algorithm SHA512).Hash.ToUpperInvariant()
+    $hashAlgorithmProperty = $Candidate.PSObject.Properties['HashAlgorithm']
+    $hashAlgorithm = if ($null -ne $hashAlgorithmProperty -and
+        -not [string]::IsNullOrWhiteSpace([string] $hashAlgorithmProperty.Value)) {
+        [string] $hashAlgorithmProperty.Value
+    }
+    elseif ($Candidate.Hash.Length -eq 128) {
+        'SHA512'
+    }
+    elseif ($Candidate.Hash.Length -eq 64) {
+        'SHA256'
+    }
+    else {
+        throw "No supported hash algorithm was provided for $($Candidate.ProductLabel) $($Candidate.TargetVersion)."
+    }
+
+    if ($hashAlgorithm -notin @('SHA256', 'SHA512')) {
+        throw "Unsupported hash algorithm '$hashAlgorithm' for $($Candidate.ProductLabel) $($Candidate.TargetVersion)."
+    }
+
+    $actualHash = (Get-FileHash -LiteralPath $Candidate.InstallerPath `
+        -Algorithm $hashAlgorithm).Hash.ToUpperInvariant()
     if ($actualHash -ne $Candidate.Hash) {
-        throw "SHA-512 validation failed for $($Candidate.ProductLabel) $($Candidate.TargetVersion). Expected $($Candidate.Hash), got $actualHash."
+        throw "$hashAlgorithm validation failed for $($Candidate.ProductLabel) $($Candidate.TargetVersion). Expected $($Candidate.Hash), got $actualHash."
     }
 
     $signature = Get-AuthenticodeSignature -LiteralPath $Candidate.InstallerPath
@@ -19,11 +39,12 @@ function Assert-InstallerTrust {
         throw "$($Candidate.ProductLabel) $($Candidate.TargetVersion) has no Authenticode signer certificate."
     }
 
-    if ($signer.Subject -cne $script:ExpectedSignerSubject -or
-        $signer.GetNameInfo(
-            [System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName,
-            $false
-        ) -cne '.NET') {
+    $simpleName = $signer.GetNameInfo(
+        [System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName,
+        $false
+    )
+    if (-not $script:ExpectedSignerSubjects.ContainsKey($signer.Subject) -or
+        $simpleName -cne $script:ExpectedSignerSubjects[$signer.Subject]) {
         throw "$($Candidate.ProductLabel) $($Candidate.TargetVersion) has an unexpected signer: '$($signer.Subject)'."
     }
 
