@@ -1,10 +1,20 @@
-name: Verify
+name: Verify PowerShell
 
 on:
   pull_request:
+    paths:
+      - '**/*.ps1'
+      - '**/*.psd1'
+      - '**/*.psm1'
+      - '**/*.ps1xml'
   push:
     branches:
       - main
+    paths:
+      - '**/*.ps1'
+      - '**/*.psd1'
+      - '**/*.psm1'
+      - '**/*.ps1xml'
   workflow_dispatch:
 
 permissions:
@@ -17,7 +27,7 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Run module verification
         shell: pwsh
@@ -29,7 +39,7 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Run module verification
         shell: powershell
