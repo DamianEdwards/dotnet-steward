@@ -1,6 +1,7 @@
 # DotNetSteward
 
 [![Verify](https://github.com/DamianEdwards/dotnet-steward/actions/workflows/verify.yml/badge.svg)](https://github.com/DamianEdwards/dotnet-steward/actions/workflows/verify.yml)
+[![PowerShell Gallery](https://img.shields.io/powershellgallery/v/DotNetSteward?label=PowerShell%20Gallery)](https://www.powershellgallery.com/packages/DotNetSteward)
 
 DotNetSteward is a Windows PowerShell module for discovering, installing,
 inventorying, and updating official Microsoft .NET SDK and runtime
@@ -21,24 +22,54 @@ Daily builds and archive-based installations are not currently supported.
 
 ## Installation
 
-After the first release is published, install from PowerShell Gallery with
-PSResourceGet:
+Install DotNetSteward from the PowerShell Gallery for the current user:
 
 ```powershell
-Install-PSResource DotNetSteward
+Install-PSResource DotNetSteward -Scope CurrentUser -TrustRepository
+```
+
+PowerShell automatically imports the module when you use one of its commands.
+To update an existing installation:
+
+```powershell
+Update-PSResource DotNetSteward
 ```
 
 PowerShellGet is also supported:
 
 ```powershell
-Install-Module DotNetSteward
+Install-Module DotNetSteward -Scope CurrentUser
 ```
 
-To import directly from a source checkout:
+When developing or testing the module from a repository checkout, import the
+manifest directly instead:
 
 ```powershell
 Import-Module .\DotNetSteward.psd1
 ```
+
+## Not using Windows?
+
+DotNetSteward manages Windows installer-based .NET installations and does not
+run on macOS or Linux. Use [`dotnetup`](https://aka.ms/dotnetup) instead for
+cross-platform, user-level installation and management of .NET SDKs and
+runtimes.
+
+Install `dotnetup` on macOS or Linux:
+
+```bash
+curl -fsSL https://aka.ms/dotnetup/get-dotnetup.sh | bash
+```
+
+Then follow the printed `PATH` instructions, open a new terminal, and run:
+
+```text
+dotnetup init
+```
+
+The interactive setup lets you select a stable, LTS, preview, major-version,
+feature-band, or exact-version SDK channel and choose how the managed .NET
+installation is exposed to your shell.
 
 ## Inventory
 
