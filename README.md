@@ -1,6 +1,7 @@
 # DotNetSteward
 
 [![Verify](https://github.com/DamianEdwards/dotnet-steward/actions/workflows/verify.yml/badge.svg)](https://github.com/DamianEdwards/dotnet-steward/actions/workflows/verify.yml)
+[![PowerShell Gallery](https://img.shields.io/powershellgallery/v/DotNetSteward?label=PowerShell%20Gallery)](https://www.powershellgallery.com/packages/DotNetSteward)
 
 DotNetSteward is a Windows PowerShell module for discovering, installing,
 inventorying, and updating official Microsoft .NET SDK and runtime
