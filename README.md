@@ -79,11 +79,41 @@ Get-DotNetInstallation -ProductType Sdk
 Get-DotNetInstallation -ProductType Runtime, AspNetCoreRuntime
 Get-DotNetInstallation -Architecture x64
 Get-DotNetInstallation | Where-Object ManagedByVisualStudio
+Get-DotNetInstallation -SkipSupportCheck
 ```
 
 Inventory records include the product type, semantic version, payload
 architecture, management source, owners, and whether DotNetSteward can update
 or uninstall the installation.
+
+The default table includes **EOL date** and **Days to EOL** columns before
+**Status**. The date is the channel's end-of-support date, formatted as
+`yyyy-MM-dd`. Days to EOL is the difference from the current local time, rounded
+up to a whole integer: positive before EOL, zero on the EOL date, and negative
+afterwards. Both columns are blank when the date is unavailable or the support
+check was skipped.
+
+The **Status** column is based on Microsoft's official
+release metadata, with the same lifecycle and patch-status categories as
+`dotnet sdk check`: `Up to date.`, `Patch <version> is available.`,
+`.NET <channel> is going out of support soon.` (maintenance), or
+`.NET <channel> is out of support.` Lifecycle warnings take precedence over
+patch availability. SDK patches are compared within the installed feature band;
+runtimes are compared within their major/minor channel. Preview versions use
+the same comparison rules; `Up to date.` does not imply a preview is supported
+for production.
+
+Objects expose `SupportStatus`, `SupportPhase`, `Channel`, `EndOfSupportDate`,
+and `LatestPatchVersion` for scripting. `Channel` is the catalog channel, which
+can differ from an early SDK's major/minor version. `LatestPatchVersion` is
+populated when checking patch availability, not for maintenance or end-of-life
+channels. Status also applies to read-only and Visual Studio-managed records
+without changing their ownership or updateability.
+
+Status checks require network access. If metadata is unavailable or invalid,
+the command warns and still returns local inventory with `Unknown` status for
+affected records. Use `-SkipSupportCheck` for offline inventory; status is then
+`Not checked`. Empty or fully filtered inventory does not trigger a lookup.
 
 Supported product types are:
 
