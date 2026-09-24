@@ -2,12 +2,30 @@
 
 DotNetSteward uses a manually initiated, tag-based release process. The normal
 operator experience is to run **Start Release** from `main`; the workflows
-calculate the version, update the module manifest, validate the source, create
-the release tag, and dispatch the finalizer.
+pin the dispatch commit, require successful verification of that commit,
+calculate the version, and create a release-only version commit. After
+validating that commit, they push its immutable release tag and dispatch the
+finalizer. No version commit is pushed to `main`.
 
 The finalizer optionally signs the PowerShell files, creates release packages,
 attests them, uploads and verifies a draft GitHub Release, publishes that
 release, and publishes the exact same `.nupkg` to PowerShell Gallery.
+
+## Development and release versions
+
+The manifest on `main` uses `ModuleVersion = '0.0.0'` to identify development
+builds. This is not a publishable release version, and it deliberately sorts
+below real releases. Do not bump it during ordinary development.
+
+Published releases and reserved release tags determine the next version, not
+the development manifest. If no release history exists, version calculation
+uses the version script's `0.1.0` bootstrap default.
+
+Each release tag points to a new commit whose only parent is the pinned,
+verified `main` commit and whose only change is the manifest version (including
+the prerelease label when applicable). This commit is not on `main`; its
+immutable tag preserves it. Checking out `v0.2.0`, for example, gives a manifest
+with version `0.2.0`, matching the release packages.
 
 ## Release phases
 
@@ -40,9 +58,12 @@ requested phase.
 - `verify.yml` validates every pull request and push to `main` using PowerShell
   7 and Windows PowerShell 5.1.
 - `start-release.yml` is **Start Release**, the normal manual entry point. It
-  calculates the next version from existing GitHub Releases, updates and
-  validates the module manifest, pushes the version commit to `main`, creates
-  an annotated immutable tag, and dispatches the finalizer on that tag.
+  checks out the exact `main` SHA captured at dispatch rather than following
+  later branch updates. The latest applicable Verify run for that SHA must have
+  succeeded, including its `Verification` gate. It calculates the next version
+  from existing releases and tags, creates a local release-only version commit,
+  verifies it in both PowerShell editions, pushes only its annotated immutable
+  tag, and dispatches the finalizer on that tag.
 - `release.yml` is **Finalize Release**. It validates the tag and source commit,
   optionally signs the staged module, builds and verifies release artifacts,
   creates attestations and the GitHub Release, and publishes the same `.nupkg`
@@ -50,6 +71,12 @@ requested phase.
 
 Start and finalization share a concurrency group so only one release can
 advance at a time.
+
+The version commit must start from a clean checkout at the pinned SHA. After
+verification, the checkout must still be clean and at that release commit
+before the tag can be published. Finalization's `source_commit` and the
+`sourceCommit` in release metadata identify the tagged release-only commit,
+not its parent on `main`. The Start Release summary also records that parent.
 
 ## Required repository setup
 
@@ -65,10 +92,11 @@ Recommended settings:
 - Restrict deployments to `main` and tags matching `v*`.
 - Disable administrator bypass if releases must always pass the approval gate.
 
-The **Start Release** workflow pushes its generated module-version commit
-directly to `main`. If `main` is protected by a branch ruleset, allow
-`github-actions[bot]` to bypass only the pull-request requirement, or use a
-dedicated release GitHub App with equivalent narrowly scoped permission.
+Keep `main` protected, including its required `Verification` check. The release
+workflows do not update `main` and need no branch-ruleset bypass, release PR,
+personal access token, or dedicated GitHub App. Their `GITHUB_TOKEN` must be
+allowed to create the release tag; any `v*` tag rules must permit that creation
+while continuing to prohibit updates or deletion of published tags.
 
 Add this required environment secret:
 
@@ -139,7 +167,8 @@ gh attestation verify .\DotNetSteward.0.1.0.nupkg `
 
 ## Cutting a release
 
-1. Ensure the desired source commit is on `main` and the Verify workflow passed.
+1. Ensure the desired source commit is on `main` and its latest Verify workflow
+   run and `Verification` gate passed.
 2. Open **Actions**, select **Start Release**, and choose **Run workflow** on
    `main`.
 3. Keep `version_bump` set to `auto` to follow the current phase naturally, or
@@ -148,8 +177,14 @@ gh attestation verify .\DotNetSteward.0.1.0.nupkg `
    `pre`, `rc`, or `rtm`.
 5. Approve the `production` environment deployment if required.
 
-No manual manifest edit, tag, GitHub Release, package creation, or Gallery
-publication is required.
+The workflow pins the `main` commit at dispatch. If that commit is not verified
+yet, Start Release fails before creating a version commit or tag; finish Verify
+and rerun Start Release. Later changes to `main` do not alter an in-progress
+release.
+
+No manual manifest edit, release PR, tag, GitHub Release, package creation, or
+Gallery publication is required. The development version on `main` stays
+`0.0.0` after a release.
 
 ## Failure recovery
 
@@ -166,6 +201,10 @@ GitHub Releases are treated as immutable:
 - If **Start Release** creates the tag but cannot dispatch the finalizer, run
   **Finalize Release** manually on that tag using the version and source commit
   shown in the Start Release summary.
+- If Start Release fails before publishing the tag, its local release-only
+  commit is not published and `main` is unchanged. Start Release can be rerun.
+- Once a tag exists, resume **Finalize Release** on that tag instead of starting
+  a new release. The tag reserves the version even if publication is incomplete.
 - Never move or recreate a published release tag.
 
 For additional protection, configure a tag ruleset for `v*` that blocks tag

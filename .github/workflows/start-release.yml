@@ -39,11 +39,11 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout main
+      - name: Checkout pinned main commit
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
-          ref: main
+          ref: ${{ github.sha }}
 
       - name: Validate release context
         shell: pwsh
@@ -56,6 +56,15 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($env:PSGALLERY_API_KEY)) {
               throw 'The production environment must define PSGALLERY_API_KEY.'
           }
+
+      - name: Require successful verification of pinned main commit
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          .\scripts\Test-ReleaseSource.ps1 `
+              -Repository $env:GITHUB_REPOSITORY `
+              -SourceCommit $env:GITHUB_SHA
 
       - name: Calculate release version
         id: version
@@ -87,15 +96,6 @@ jobs:
                   Sort-Object -Unique
           )
 
-          $manifest = Import-PowerShellDataFile .\DotNetSteward.psd1
-          $initialVersion = [string] $manifest.ModuleVersion
-          if ($manifest.PrivateData.PSData.ContainsKey('Prerelease') -and
-              -not [string]::IsNullOrWhiteSpace(
-                  [string] $manifest.PrivateData.PSData.Prerelease
-              )) {
-              $initialVersion += "-$($manifest.PrivateData.PSData.Prerelease)"
-          }
-
           $defaultBump = $env:DEFAULT_VERSION_BUMP
           if ([string]::IsNullOrWhiteSpace($defaultBump)) {
               $defaultBump = 'patch'
@@ -107,7 +107,6 @@ jobs:
 
           $result = .\scripts\Get-NextReleaseVersion.ps1 `
               -ExistingVersion $existingVersions `
-              -InitialVersion $initialVersion `
               -VersionBump $env:REQUESTED_VERSION_BUMP `
               -Phase $env:REQUESTED_PHASE `
               -DefaultVersionBump $defaultBump `
@@ -121,12 +120,20 @@ jobs:
           "- **Phase:** ``$($result.Phase)``" >> $env:GITHUB_STEP_SUMMARY
           "- **Base bump:** ``$($result.VersionBump)``" >> $env:GITHUB_STEP_SUMMARY
 
-      - name: Set module version
+      - name: Create release-only version commit
+        id: commit
         shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          .\scripts\Set-ModuleVersion.ps1 `
-              -ManifestPath .\DotNetSteward.psd1 `
-              -Version '${{ steps.version.outputs.version }}'
+          git config user.name 'github-actions[bot]'
+          if ($LASTEXITCODE -ne 0) { throw 'Could not configure the release commit author.' }
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if ($LASTEXITCODE -ne 0) { throw 'Could not configure the release commit email.' }
+          $result = .\scripts\New-ReleaseCommit.ps1 `
+              -BaseCommit $env:GITHUB_SHA `
+              -Version $env:VERSION
+          "source_commit=$($result.SourceCommit)" >> $env:GITHUB_OUTPUT
 
       - name: Install release packaging tools
         shell: pwsh
@@ -153,11 +160,12 @@ jobs:
         shell: powershell
         run: .\tests\Verify.ps1
 
-      - name: Commit version and create immutable tag
+      - name: Publish immutable release tag
         id: tag
         shell: pwsh
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          SOURCE_COMMIT: ${{ steps.commit.outputs.source_commit }}
         run: |
           $tag = "v$env:VERSION"
           $existingTag = @(git ls-remote --tags origin "refs/tags/$tag")
@@ -168,30 +176,30 @@ jobs:
               throw "Tag '$tag' already exists. Resume Finalize Release on that tag instead."
           }
 
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add DotNetSteward.psd1
-          $changedFiles = @(git diff --cached --name-only)
-          if ($changedFiles.Count -gt 0) {
-              git commit -m "Set module version to $env:VERSION"
-              if ($LASTEXITCODE -ne 0) {
-                  throw 'Could not commit the module version.'
-              }
-          }
-
           $sourceCommit = (git rev-parse HEAD).Trim()
-          git push origin HEAD:main
-          if ($LASTEXITCODE -ne 0) {
-              throw 'Could not push the version commit to main.'
+          if ($LASTEXITCODE -ne 0 -or $sourceCommit -ne $env:SOURCE_COMMIT) {
+              throw 'The release checkout changed after the version commit was created.'
+          }
+          $changes = @(git status --porcelain --untracked-files=all)
+          if ($LASTEXITCODE -ne 0 -or $changes.Count -ne 0) {
+              throw 'The release checkout must remain clean after verification.'
           }
           git tag -a $tag $sourceCommit -m "Release $tag"
-          git push origin $tag
+          if ($LASTEXITCODE -ne 0) {
+              throw "Could not create tag '$tag'."
+          }
+          git -c push.followTags=false push origin "refs/tags/$tag`:refs/tags/$tag"
           if ($LASTEXITCODE -ne 0) {
               throw "Could not publish tag '$tag'."
           }
 
           "source_commit=$sourceCommit" >> $env:GITHUB_OUTPUT
           "tag=$tag" >> $env:GITHUB_OUTPUT
+
+          '## Release tag published' >> $env:GITHUB_STEP_SUMMARY
+          "- **Base main commit:** ``$env:GITHUB_SHA``" >> $env:GITHUB_STEP_SUMMARY
+          "- **Tag:** ``$tag``" >> $env:GITHUB_STEP_SUMMARY
+          "- **Source commit:** ``$sourceCommit``" >> $env:GITHUB_STEP_SUMMARY
 
       - name: Dispatch release finalizer
         shell: pwsh
@@ -207,6 +215,4 @@ jobs:
               throw 'The release tag was created, but Finalize Release could not be dispatched. Run it manually on the new tag.'
           }
 
-          '## Release started' >> $env:GITHUB_STEP_SUMMARY
-          "- **Tag:** ``${{ steps.tag.outputs.tag }}``" >> $env:GITHUB_STEP_SUMMARY
-          "- **Source commit:** ``${{ steps.tag.outputs.source_commit }}``" >> $env:GITHUB_STEP_SUMMARY
+          'Finalize Release was dispatched on the published tag.' >> $env:GITHUB_STEP_SUMMARY
