@@ -188,9 +188,12 @@ When changing:
 
 ## Packaging and releases
 
-Do not manually bump `ModuleVersion` for ordinary development changes. Releases
-are created by manually running **Start Release** on `main`; it calculates and
-commits the version, tags the commit, and dispatches **Finalize Release**.
+Keep `ModuleVersion` at `0.0.0` on `main` for development builds. Releases are
+created by manually running **Start Release** on `main`; it pins a verified
+commit, calculates the version from releases/tags, and creates a release-only
+version commit. It verifies and tags that commit, pushes only the immutable
+tag, and dispatches **Finalize Release**. Never push a version commit to `main`
+or weaken its branch rules for releases.
 
 The default repository settings are a patch bump and RTM phase. PowerShell
 Gallery prerelease labels use `pre1`, `pre2`, and `rc1`, not dotted labels.

@@ -48,6 +48,10 @@ manifest directly instead:
 Import-Module .\DotNetSteward.psd1
 ```
 
+Repository development builds report version `0.0.0`. Release tags and
+published packages contain their actual release version; releasing does not
+bump the development manifest on `main`.
+
 ## Not using Windows?
 
 DotNetSteward manages Windows installer-based .NET installations and does not
