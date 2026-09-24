@@ -1,6 +1,6 @@
 @{
     RootModule = 'DotNetSteward.psm1'
-    ModuleVersion = '0.0.0'
+    ModuleVersion = '0.2.0'
     GUID = '80fe4417-3563-4336-b389-58cb1df77ae0'
     Author = 'Damian Edwards'
     Copyright = '(c) 2026 Damian Edwards and contributors'
