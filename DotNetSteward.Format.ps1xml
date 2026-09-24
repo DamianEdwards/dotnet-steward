@@ -69,6 +69,18 @@
           <TableColumnHeader>
             <Label>Updateable</Label>
           </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>EOL date</Label>
+            <Width>10</Width>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>Days to EOL</Label>
+            <Width>11</Width>
+            <Alignment>Right</Alignment>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>Status</Label>
+          </TableColumnHeader>
         </TableHeaders>
         <TableRowEntries>
           <TableRowEntry>
@@ -88,7 +100,17 @@
               <TableColumnItem>
                 <PropertyName>IsUpdateable</PropertyName>
               </TableColumnItem>
+              <TableColumnItem>
+                <ScriptBlock>if ($null -ne $_.EndOfSupportDate) { $_.EndOfSupportDate.ToString('yyyy-MM-dd', [System.Globalization.CultureInfo]::InvariantCulture) }</ScriptBlock>
+              </TableColumnItem>
+              <TableColumnItem>
+                <ScriptBlock>if ($null -ne $_.EndOfSupportDate) { [int] [math]::Ceiling(($_.EndOfSupportDate - [datetime]::Now).TotalDays) }</ScriptBlock>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>SupportStatus</PropertyName>
+              </TableColumnItem>
             </TableColumnItems>
+            <Wrap />
           </TableRowEntry>
         </TableRowEntries>
       </TableControl>

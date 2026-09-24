@@ -10,6 +10,11 @@ function Get-DotNetInstallation {
     Studio, or another installer are returned as read-only records with their
     ownership and management source.
 
+    Checks Microsoft's official release metadata for support status, using the
+    lifecycle and patch-status categories shown by dotnet sdk check. If metadata
+    cannot be retrieved, returns the local inventory with Unknown status and a
+    warning. Installer ownership and updateability are not changed.
+
     .PARAMETER ProductType
     Limits results to one or more .NET product types.
 
@@ -18,6 +23,9 @@ function Get-DotNetInstallation {
 
     .PARAMETER ManagementSource
     Limits results by the installer or product that manages them.
+
+    .PARAMETER SkipSupportCheck
+    Skips online release metadata lookups and reports Not checked support status.
 
     .EXAMPLE
     Get-DotNetInstallation
@@ -33,6 +41,11 @@ function Get-DotNetInstallation {
     Get-DotNetInstallation | Where-Object ManagedByVisualStudio
 
     Lists read-only components managed by Visual Studio.
+
+    .EXAMPLE
+    Get-DotNetInstallation -SkipSupportCheck
+
+    Lists local installations without accessing the online release catalog.
     #>
 
     [CmdletBinding()]
@@ -51,7 +64,9 @@ function Get-DotNetInstallation {
             'SharedInstaller',
             'WindowsInstaller'
         )]
-        [string[]] $ManagementSource
+        [string[]] $ManagementSource,
+
+        [switch] $SkipSupportCheck
     )
 
     if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
@@ -75,5 +90,6 @@ function Get-DotNetInstallation {
         })
     }
 
+    Add-InstallationSupportStatus -Installations $installations -SkipSupportCheck:$SkipSupportCheck
     return Sort-DotNetInstallations -Installations $installations
 }

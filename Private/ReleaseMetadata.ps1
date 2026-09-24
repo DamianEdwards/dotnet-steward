@@ -365,3 +365,200 @@ function Get-ReleaseType {
 
     return [string] $property.Value
 }
+
+function Get-ChannelSdkVersions {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object] $ChannelEntry,
+
+        [Parameter(Mandatory = $true)]
+        [hashtable] $MetadataCache
+    )
+
+    $metadata = Get-ChannelReleaseMetadata -ChannelEntry $ChannelEntry -Cache $MetadataCache
+    foreach ($release in @($metadata.releases)) {
+        foreach ($propertyName in @('sdk', 'sdks')) {
+            $property = $release.PSObject.Properties[$propertyName]
+            if ($null -eq $property) {
+                continue
+            }
+            foreach ($sdk in @($property.Value)) {
+                if ($null -ne $sdk) {
+                    New-SdkVersionInfo -Text ([string] $sdk.version)
+                }
+            }
+        }
+    }
+}
+
+function Get-InstallationSupportInfo {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object] $Installation,
+
+        [Parameter(Mandatory = $true)]
+        [object[]] $ReleaseIndex,
+
+        [Parameter(Mandatory = $true)]
+        [hashtable] $MetadataCache
+    )
+
+    $version = $Installation.VersionInfo
+    $channelEntry = Get-ChannelIndexEntry -ReleaseIndex $ReleaseIndex -Channel $version.Channel
+    if ($Installation.ProductType -eq 'Sdk') {
+        $possibleChannels = @(
+            if ($null -ne $channelEntry) {
+                $channelEntry
+            }
+            foreach ($entry in $ReleaseIndex) {
+                $latestSdkProperty = $entry.PSObject.Properties['latest-sdk']
+                if ($null -ne $latestSdkProperty -and $entry -ne $channelEntry) {
+                    $latestSdk = New-SdkVersionInfo -Text ([string] $latestSdkProperty.Value)
+                    if ($latestSdk.Channel -eq $version.Channel) {
+                        $entry
+                    }
+                }
+            }
+        )
+
+        # Early SDK versions can belong to a different runtime/catalog channel.
+        if ($possibleChannels.Count -gt 1 -or $null -eq $channelEntry) {
+            $channelEntry = $null
+            foreach ($entry in $possibleChannels) {
+                $versions = @(Get-ChannelSdkVersions -ChannelEntry $entry -MetadataCache $MetadataCache)
+                if (@($versions | Where-Object Text -eq $version.Text).Count -gt 0) {
+                    $channelEntry = $entry
+                    break
+                }
+            }
+        }
+    }
+
+    if ($null -eq $channelEntry) {
+        throw "No official release channel was found for $($Installation.ProductType) $($version.Text)."
+    }
+
+    $channel = [string] $channelEntry.'channel-version'
+    $phase = Get-SupportPhase -ChannelEntry $channelEntry
+    if ($phase -notin @('active', 'maintenance', 'eol', 'preview', 'go-live')) {
+        throw "Release metadata for .NET $channel has an unknown support phase '$phase'."
+    }
+
+    $endOfSupportDate = $null
+    $endOfSupportProperty = $channelEntry.PSObject.Properties['eol-date']
+    if ($null -ne $endOfSupportProperty -and
+        -not [string]::IsNullOrWhiteSpace([string] $endOfSupportProperty.Value)) {
+        $endOfSupportDate = [datetime]::ParseExact(
+            [string] $endOfSupportProperty.Value,
+            'yyyy-MM-dd',
+            [Globalization.CultureInfo]::InvariantCulture
+        )
+    }
+
+    $latestPatch = $null
+    if ($phase -eq 'eol' -or
+        ($null -ne $endOfSupportDate -and $endOfSupportDate -lt [datetime]::Today)) {
+        $status = ".NET $channel is out of support."
+    }
+    elseif ($phase -eq 'maintenance') {
+        $status = ".NET $channel is going out of support soon."
+    }
+    else {
+        if ($Installation.ProductType -eq 'Sdk') {
+            $latestSdk = New-SdkVersionInfo -Text ([string] $channelEntry.'latest-sdk')
+            if ($latestSdk.FeatureBandKey -eq $version.FeatureBandKey) {
+                $latestPatch = $latestSdk
+            }
+            else {
+                $versions = @(Get-ChannelSdkVersions -ChannelEntry $channelEntry -MetadataCache $MetadataCache)
+                foreach ($candidate in $versions) {
+                    if ($candidate.FeatureBandKey -eq $version.FeatureBandKey -and
+                        ($null -eq $latestPatch -or
+                            (Compare-SdkVersion -Left $candidate -Right $latestPatch) -gt 0)) {
+                        $latestPatch = $candidate
+                    }
+                }
+            }
+        }
+        else {
+            $latestPatch = New-SdkVersionInfo -Text ([string] $channelEntry.'latest-runtime')
+        }
+
+        if ($null -eq $latestPatch) {
+            throw "No official patch release was found for $($Installation.ProductType) $($version.Text)."
+        }
+        if ((Compare-SdkVersion -Left $latestPatch -Right $version) -gt 0) {
+            $status = "Patch $($latestPatch.Text) is available."
+        }
+        else {
+            $status = 'Up to date.'
+        }
+    }
+
+    return @{
+        SupportStatus = $status
+        SupportPhase = $phase
+        Channel = $channel
+        EndOfSupportDate = $endOfSupportDate
+        LatestPatchVersion = if ($null -ne $latestPatch) { $latestPatch.Text } else { $null }
+    }
+}
+
+function Add-InstallationSupportStatus {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [object[]] $Installations,
+
+        [switch] $SkipSupportCheck
+    )
+
+    foreach ($installation in $Installations) {
+        $installation | Add-Member -NotePropertyMembers @{
+            SupportStatus = if ($SkipSupportCheck) { 'Not checked' } else { 'Unknown' }
+            SupportPhase = 'unknown'
+            Channel = $null
+            EndOfSupportDate = $null
+            LatestPatchVersion = $null
+        } -Force
+    }
+    if ($SkipSupportCheck -or $Installations.Count -eq 0) {
+        return
+    }
+
+    $originalSecurityProtocol = [Net.ServicePointManager]::SecurityProtocol
+    try {
+        [Net.ServicePointManager]::SecurityProtocol =
+            $originalSecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+
+        try {
+            $releaseIndex = @(Get-ReleaseIndex)
+        }
+        catch {
+            Write-Warning "Could not check .NET support status: $($_.Exception.Message) Local inventory is still available; support status is Unknown."
+            return
+        }
+
+        $metadataCache = @{}
+        $statusCache = @{}
+        foreach ($installation in $Installations) {
+            $key = "$($installation.ProductType)|$($installation.Version)"
+            if (-not $statusCache.ContainsKey($key)) {
+                try {
+                    $statusCache[$key] = Get-InstallationSupportInfo -Installation $installation `
+                        -ReleaseIndex $releaseIndex -MetadataCache $metadataCache
+                }
+                catch {
+                    $statusCache[$key] = $null
+                    Write-Warning "Could not check support status for $($installation.ProductType) $($installation.Version): $($_.Exception.Message) Support status is Unknown."
+                }
+            }
+            if ($null -ne $statusCache[$key]) {
+                $installation | Add-Member -NotePropertyMembers $statusCache[$key] -Force
+            }
+        }
+    }
+    finally {
+        [Net.ServicePointManager]::SecurityProtocol = $originalSecurityProtocol
+    }
+}
