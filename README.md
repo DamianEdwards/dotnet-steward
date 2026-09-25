@@ -208,7 +208,8 @@ bundles are updateable; shared MSI payloads are never modified directly.
 Uninstall-DotNetSdk
 Uninstall-DotNetSdk -VersionBand 8.0.4xx
 Uninstall-DotNetSdk -UninstallAll -Force
-Uninstall-DotNetRuntime -ProductType WindowsDesktopRuntime -Architecture x64 -VersionBand 8.0
+Uninstall-DotNetRuntime -ProductType WindowsDesktopRuntime `
+    -Architecture x64 -VersionBand 8.0
 Uninstall-DotNetRuntime -UninstallAll -WhatIf
 ```
 
