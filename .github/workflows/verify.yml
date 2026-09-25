@@ -9,28 +9,122 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      markdown: ${{ steps.filter.outputs.markdown }}
+      powershell: ${{ steps.filter.outputs.powershell }}
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Detect relevant changes
+        id: filter
+        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
+        with:
+          filters: |
+            markdown:
+              - '**/*.md'
+            powershell:
+              - '**/*.ps1'
+              - '**/*.psd1'
+              - '**/*.psm1'
+              - '**/*.ps1xml'
+
   powershell:
     name: PowerShell 7
+    needs: changes
+    if: needs.changes.outputs.powershell == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Install release packaging tools
+        shell: pwsh
+        run: |
+          $available = Get-Module -ListAvailable Microsoft.PowerShell.PSResourceGet |
+              Sort-Object Version -Descending |
+              Select-Object -First 1
+          if ($null -eq $available -or $available.Version -lt [version] '1.1.0') {
+              Install-Module Microsoft.PowerShell.PSResourceGet `
+                  -MinimumVersion 1.1.0 `
+                  -Repository PSGallery `
+                  -Scope CurrentUser `
+                  -Force `
+                  -AllowClobber
+          }
 
       - name: Run module verification
         shell: pwsh
+        env:
+          DOTNET_STEWARD_REQUIRE_PACKAGING_TESTS: true
         run: .\tests\Verify.ps1
 
   windows-powershell:
     name: Windows PowerShell 5.1
+    needs: changes
+    if: needs.changes.outputs.powershell == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 
       - name: Run module verification
         shell: powershell
         run: .\tests\Verify.ps1
+
+  markdown:
+    name: Markdown
+    needs: changes
+    if: needs.changes.outputs.markdown == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Lint Markdown
+        uses: DavidAnson/markdownlint-cli2-action@992badcdf24e3b8eb7e87ff9287fe931bcb00c6e # v20
+        with:
+          globs: '**/*.md'
+
+  verification:
+    name: Verification
+    needs:
+      - changes
+      - markdown
+      - powershell
+      - windows-powershell
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Confirm required checks passed
+        shell: bash
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          MARKDOWN_REQUIRED: ${{ needs.changes.outputs.markdown == 'true' || github.event_name == 'workflow_dispatch' }}
+          MARKDOWN_RESULT: ${{ needs.markdown.result }}
+          POWERSHELL_REQUIRED: ${{ needs.changes.outputs.powershell == 'true' || github.event_name == 'workflow_dispatch' }}
+          POWERSHELL_RESULT: ${{ needs.powershell.result }}
+          WINDOWS_POWERSHELL_RESULT: ${{ needs.windows-powershell.result }}
+        run: |
+          test "$CHANGES_RESULT" = success
+
+          if [ "$MARKDOWN_REQUIRED" = true ]; then
+            test "$MARKDOWN_RESULT" = success
+          fi
+
+          if [ "$POWERSHELL_REQUIRED" = true ]; then
+            test "$POWERSHELL_RESULT" = success
+            test "$WINDOWS_POWERSHELL_RESULT" = success
+          fi

@@ -1,0 +1,428 @@
+name: Finalize Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version selected by Start Release
+        required: true
+        type: string
+      source_commit:
+        description: Tagged source commit selected by Start Release
+        required: true
+        type: string
+
+concurrency:
+  group: dotnet-steward-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Sign and publish
+    runs-on: windows-2025
+    timeout-minutes: 30
+    environment: production
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+      SOURCE_COMMIT: ${{ inputs.source_commit }}
+
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+
+      - name: Validate release context and configuration
+        id: context
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PSGALLERY_API_KEY: ${{ secrets.PSGALLERY_API_KEY }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_SIGNING_ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          AZURE_CERT_PROFILE: ${{ secrets.AZURE_CERT_PROFILE }}
+        run: |
+          $version = $env:RELEASE_VERSION
+          $sourceCommit = $env:SOURCE_COMMIT
+          $tag = "v$version"
+          if ($env:GITHUB_REF_TYPE -ne 'tag' -or
+              $env:GITHUB_REF_NAME -ne $tag) {
+              throw "Finalize Release must run from tag '$tag'."
+          }
+          if ($sourceCommit -notmatch '^[0-9a-f]{40}$') {
+              throw "Invalid source commit '$sourceCommit'."
+          }
+          $tagCommit = (git rev-list -n 1 $tag).Trim()
+          if ($tagCommit -ne $sourceCommit) {
+              throw "Tag '$tag' points to '$tagCommit', not '$sourceCommit'."
+          }
+
+          $manifest = Import-PowerShellDataFile .\DotNetSteward.psd1
+          $manifestVersion = [string] $manifest.ModuleVersion
+          if ($manifest.PrivateData.PSData.ContainsKey('Prerelease') -and
+              -not [string]::IsNullOrWhiteSpace(
+                  [string] $manifest.PrivateData.PSData.Prerelease
+              )) {
+              $manifestVersion += "-$($manifest.PrivateData.PSData.Prerelease)"
+          }
+          if ($manifestVersion -ne $version) {
+              throw "Manifest version '$manifestVersion' does not match '$version'."
+          }
+          if ([string]::IsNullOrWhiteSpace($env:PSGALLERY_API_KEY)) {
+              throw 'The production environment must define PSGALLERY_API_KEY.'
+          }
+
+          $signingNames = @(
+              'AZURE_CLIENT_ID',
+              'AZURE_TENANT_ID',
+              'AZURE_SUBSCRIPTION_ID',
+              'AZURE_SIGNING_ENDPOINT',
+              'AZURE_SIGNING_ACCOUNT',
+              'AZURE_CERT_PROFILE'
+          )
+          $configured = @($signingNames | Where-Object {
+              -not [string]::IsNullOrWhiteSpace(
+                  [Environment]::GetEnvironmentVariable($_)
+              )
+          })
+          if ($configured.Count -eq 0) {
+              $signingEnabled = $false
+              Write-Warning 'Azure Artifact Signing is not configured; publishing unsigned module files with GitHub attestations.'
+          }
+          elseif ($configured.Count -ne $signingNames.Count) {
+              $missing = @($signingNames | Where-Object {
+                  [string]::IsNullOrWhiteSpace(
+                      [Environment]::GetEnvironmentVariable($_)
+                  )
+              })
+              throw "Azure signing is partially configured. Missing secret(s): $($missing -join ', ')."
+          }
+          else {
+              $signingEnabled = $true
+          }
+
+          $releases = @(
+              gh release list --repo '${{ github.repository }}' `
+                  --json tagName,isDraft --limit 1000 |
+                  ConvertFrom-Json
+          )
+          if ($LASTEXITCODE -ne 0) {
+              throw 'Could not query existing GitHub releases.'
+          }
+          $release = $releases |
+              Where-Object tagName -eq $tag |
+              Select-Object -First 1
+          $releaseExists = $null -ne $release -and -not $release.isDraft
+          $draftExists = $null -ne $release -and $release.isDraft
+
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "is_prerelease=$($version.Contains('-').ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "signing_enabled=$($signingEnabled.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "release_exists=$($releaseExists.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "draft_exists=$($draftExists.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+
+      - name: Remove incomplete draft release
+        if: steps.context.outputs.draft_exists == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete '${{ steps.context.outputs.tag }}' `
+              --repo '${{ github.repository }}' `
+              --yes
+          if ($LASTEXITCODE -ne 0) {
+              throw 'Could not remove the incomplete draft release.'
+          }
+
+      - name: Install packaging tools
+        shell: pwsh
+        run: |
+          $available = Get-Module -ListAvailable Microsoft.PowerShell.PSResourceGet |
+              Sort-Object Version -Descending |
+              Select-Object -First 1
+          if ($null -eq $available -or $available.Version -lt [version] '1.1.0') {
+              Install-Module Microsoft.PowerShell.PSResourceGet `
+                  -MinimumVersion 1.1.0 `
+                  -Repository PSGallery `
+                  -Scope CurrentUser `
+                  -Force `
+                  -AllowClobber
+          }
+          Import-Module Microsoft.PowerShell.PSResourceGet `
+              -MinimumVersion 1.1.0 `
+              -Force
+
+      - name: Verify tagged source with PowerShell 7
+        if: steps.context.outputs.release_exists != 'true'
+        shell: pwsh
+        env:
+          DOTNET_STEWARD_REQUIRE_PACKAGING_TESTS: true
+        run: .\tests\Verify.ps1
+
+      - name: Verify tagged source with Windows PowerShell 5.1
+        if: steps.context.outputs.release_exists != 'true'
+        shell: powershell
+        run: .\tests\Verify.ps1
+
+      - name: Stage module package
+        if: steps.context.outputs.release_exists != 'true'
+        shell: pwsh
+        run: |
+          .\scripts\New-ModulePackage.ps1 `
+              -SourcePath . `
+              -DestinationPath .\artifacts\stage
+
+      - name: Azure login
+        if: >
+          steps.context.outputs.release_exists != 'true' &&
+          steps.context.outputs.signing_enabled == 'true'
+        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign PowerShell module files
+        if: >
+          steps.context.outputs.release_exists != 'true' &&
+          steps.context.outputs.signing_enabled == 'true'
+        uses: azure/artifact-signing-action@b443cf8ea4124818d2ea9f043cba29fc3ec47b16
+        with:
+          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_CERT_PROFILE }}
+          files-folder: ${{ github.workspace }}\artifacts\stage\DotNetSteward
+          files-folder-filter: ps1,psm1,psd1,ps1xml
+          files-folder-recurse: true
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          exclude-environment-credential: true
+          exclude-workload-identity-credential: true
+          exclude-managed-identity-credential: true
+          exclude-shared-token-cache-credential: true
+          exclude-visual-studio-credential: true
+          exclude-visual-studio-code-credential: true
+          exclude-azure-cli-credential: false
+          exclude-azure-powershell-credential: true
+          exclude-azure-developer-cli-credential: true
+          exclude-interactive-browser-credential: true
+
+      - name: Verify signed module files
+        if: >
+          steps.context.outputs.release_exists != 'true' &&
+          steps.context.outputs.signing_enabled == 'true'
+        shell: pwsh
+        run: |
+          $signableFiles = @(
+              Get-ChildItem .\artifacts\stage\DotNetSteward -Recurse -File |
+                  Where-Object Extension -in @('.ps1', '.psm1', '.psd1', '.ps1xml')
+          )
+          if ($signableFiles.Count -eq 0) {
+              throw 'No signable PowerShell module files were staged.'
+          }
+          foreach ($file in $signableFiles) {
+              $signature = Get-AuthenticodeSignature -LiteralPath $file.FullName
+              if ($signature.Status -ne 'Valid') {
+                  throw "Authenticode verification failed for '$($file.FullName)': $($signature.Status)."
+              }
+          }
+
+      - name: Verify staged module
+        if: steps.context.outputs.release_exists != 'true'
+        shell: pwsh
+        run: >
+          .\tests\Verify.ps1
+          -ModuleRoot .\artifacts\stage\DotNetSteward
+          -SkipOnlineChecks
+
+      - name: Build release assets
+        if: steps.context.outputs.release_exists != 'true'
+        shell: pwsh
+        run: |
+          .\scripts\New-ReleaseAssets.ps1 `
+              -ModulePath .\artifacts\stage\DotNetSteward `
+              -OutputPath .\artifacts\release `
+              -Version $env:RELEASE_VERSION `
+              -SourceCommit $env:SOURCE_COMMIT `
+              -Signed ([bool]::Parse('${{ steps.context.outputs.signing_enabled }}'))
+
+      - name: Verify newly built release assets
+        if: steps.context.outputs.release_exists != 'true'
+        shell: pwsh
+        run: |
+          .\scripts\Test-ReleaseAssets.ps1 `
+              -Path .\artifacts\release `
+              -Version $env:RELEASE_VERSION `
+              -SourceCommit $env:SOURCE_COMMIT
+
+      - name: Attest release packages
+        id: attest
+        if: steps.context.outputs.release_exists != 'true'
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26
+        with:
+          subject-path: |
+            ./artifacts/release/*.nupkg
+            ./artifacts/release/*.zip
+
+      - name: Stage portable attestation
+        if: steps.context.outputs.release_exists != 'true'
+        shell: pwsh
+        run: |
+          Copy-Item `
+              -LiteralPath '${{ steps.attest.outputs.bundle-path }}' `
+              -Destination .\artifacts\release\attestations.jsonl
+
+      - name: Create draft GitHub release
+        if: steps.context.outputs.release_exists != 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $arguments = @(
+              'release',
+              'create',
+              '${{ steps.context.outputs.tag }}',
+              '--repo',
+              '${{ github.repository }}',
+              '--verify-tag',
+              '--title',
+              '${{ steps.context.outputs.tag }}',
+              '--generate-notes',
+              '--draft'
+          )
+          if ('${{ steps.context.outputs.is_prerelease }}' -eq 'true') {
+              $arguments += @('--prerelease', '--latest=false')
+          }
+          $arguments += @(
+              Get-ChildItem .\artifacts\release -File |
+                  Sort-Object Name |
+                  ForEach-Object FullName
+          )
+          & gh @arguments
+          if ($LASTEXITCODE -ne 0) {
+              throw 'GitHub draft release creation failed.'
+          }
+
+      - name: Download GitHub release assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if (Test-Path -LiteralPath .\artifacts\release) {
+              Move-Item `
+                  -LiteralPath .\artifacts\release `
+                  -Destination .\artifacts\built-release
+          }
+          [void] (New-Item .\artifacts\release -ItemType Directory -Force)
+          gh release download '${{ steps.context.outputs.tag }}' `
+              --repo '${{ github.repository }}' `
+              --dir .\artifacts\release
+          if ($LASTEXITCODE -ne 0) {
+              throw 'Could not download the existing GitHub Release.'
+          }
+
+      - name: Verify release assets
+        id: assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $result = .\scripts\Test-ReleaseAssets.ps1 `
+              -Path .\artifacts\release `
+              -Version $env:RELEASE_VERSION `
+              -SourceCommit $env:SOURCE_COMMIT
+          "nupkg_path=$($result.NupkgPath)" >> $env:GITHUB_OUTPUT
+          "signed=$($result.Signed.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+
+          gh attestation verify $result.NupkgPath `
+              --repo '${{ github.repository }}'
+          if ($LASTEXITCODE -ne 0) {
+              throw 'NuGet package attestation verification failed.'
+          }
+          gh attestation verify $result.ZipPath `
+              --repo '${{ github.repository }}'
+          if ($LASTEXITCODE -ne 0) {
+              throw 'ZIP package attestation verification failed.'
+          }
+
+      - name: Publish GitHub release
+        if: steps.context.outputs.release_exists != 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $arguments = @(
+              'release',
+              'edit',
+              '${{ steps.context.outputs.tag }}',
+              '--repo',
+              '${{ github.repository }}',
+              '--draft=false'
+          )
+          if ('${{ steps.context.outputs.is_prerelease }}' -eq 'true') {
+              $arguments += '--latest=false'
+          }
+          else {
+              $arguments += '--latest'
+          }
+          & gh @arguments
+          if ($LASTEXITCODE -ne 0) {
+              throw 'GitHub Release publication failed.'
+          }
+
+      - name: Publish to PowerShell Gallery
+        shell: pwsh
+        env:
+          PSGALLERY_API_KEY: ${{ secrets.PSGALLERY_API_KEY }}
+        run: |
+          $version = $env:RELEASE_VERSION
+          $findParameters = @{
+              Name = 'DotNetSteward'
+              Version = $version
+              Repository = 'PSGallery'
+              ErrorAction = 'SilentlyContinue'
+          }
+          if ($version.Contains('-')) {
+              $findParameters.Prerelease = $true
+          }
+          $existing = Find-PSResource @findParameters
+          $publishedNow = $false
+          if ($null -eq $existing) {
+              Publish-PSResource `
+                  -NupkgPath '${{ steps.assets.outputs.nupkg_path }}' `
+                  -Repository PSGallery `
+                  -ApiKey $env:PSGALLERY_API_KEY
+              $publishedNow = $true
+          }
+          else {
+              Write-Warning "DotNetSteward $version already exists on PowerShell Gallery; publication was skipped."
+          }
+
+          $published = $null
+          for ($attempt = 1; $attempt -le 30 -and $null -eq $published; $attempt++) {
+              $published = Find-PSResource @findParameters
+              if ($null -eq $published) {
+                  Start-Sleep -Seconds 20
+              }
+          }
+          if ($null -eq $published) {
+              if ($publishedNow) {
+                  Write-Warning "PowerShell Gallery accepted DotNetSteward $version, but it was not visible in search after 10 minutes."
+              }
+              else {
+                  throw "DotNetSteward $version could not be verified on PowerShell Gallery."
+              }
+          }
+
+          '## Release published' >> $env:GITHUB_STEP_SUMMARY
+          "- **Version:** ``$version``" >> $env:GITHUB_STEP_SUMMARY
+          "- **Signed:** ``${{ steps.assets.outputs.signed }}``" >> $env:GITHUB_STEP_SUMMARY
+          "- **GitHub Release:** ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ steps.context.outputs.tag }}" >> $env:GITHUB_STEP_SUMMARY
