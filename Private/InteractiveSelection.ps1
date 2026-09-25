@@ -33,7 +33,10 @@ function Show-AvailableUpdates {
 function Select-UpdateCandidates {
     param(
         [Parameter(Mandatory = $true)]
-        [object[]] $Candidates
+        [object[]] $Candidates,
+
+        [ValidateSet('update', 'uninstall')]
+        [string] $Action = 'update'
     )
 
     try {
@@ -41,7 +44,7 @@ function Select-UpdateCandidates {
         $lineCount = $Candidates.Count + 2
         $selected = New-Object bool[] $Candidates.Count
         for ($index = 0; $index -lt $selected.Length; $index++) {
-            $selected[$index] = $true
+            $selected[$index] = $Action -eq 'update'
         }
 
         for ($line = 0; $line -lt $lineCount; $line++) {
@@ -52,14 +55,25 @@ function Select-UpdateCandidates {
 
         while ($true) {
             $lines = New-Object System.Collections.Generic.List[string]
-            $lines.Add('Select .NET updates:')
+            if ($Action -eq 'uninstall') {
+                $lines.Add('Select .NET installations to uninstall:')
+            }
+            else {
+                $lines.Add('Select .NET updates:')
+            }
             for ($index = 0; $index -lt $Candidates.Count; $index++) {
                 $marker = if ($selected[$index]) { 'x' } else { ' ' }
                 $pointer = if ($index -eq $cursor) { '>' } else { ' ' }
                 $candidate = $Candidates[$index]
-                $lines.Add(('{0} [{1}] {2} {3} {4}: {5} -> {6}' -f
-                    $pointer, $marker, $candidate.ProductLabel, $candidate.Architecture, $candidate.Band,
-                    $candidate.CurrentVersion, $candidate.TargetVersion))
+                if ($Action -eq 'uninstall') {
+                    $lines.Add(('{0} [{1}] {2} {3} {4}' -f
+                        $pointer, $marker, $candidate.ProductType, $candidate.Architecture, $candidate.Version))
+                }
+                else {
+                    $lines.Add(('{0} [{1}] {2} {3} {4}: {5} -> {6}' -f
+                        $pointer, $marker, $candidate.ProductLabel, $candidate.Architecture, $candidate.Band,
+                        $candidate.CurrentVersion, $candidate.TargetVersion))
+                }
             }
             $lines.Add('Up/Down: move  Space: toggle  A: all  N: none  Enter: accept  Esc: cancel')
 
@@ -116,7 +130,8 @@ function Select-UpdateCandidates {
         }
     }
     catch {
-        throw "Interactive checklist input is unavailable in this host. Run with -UpdateAll or -VersionBand instead. $($_.Exception.Message)"
+        $allSwitch = if ($Action -eq 'uninstall') { '-UninstallAll' } else { '-UpdateAll' }
+        throw "Interactive checklist input is unavailable in this host. Run with $allSwitch or -VersionBand instead. $($_.Exception.Message)"
     }
 }
 

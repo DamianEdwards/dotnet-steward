@@ -57,6 +57,8 @@ Assert-Condition ($null -ne $module) 'DotNetSteward did not import.'
 
 $expectedExports = @(
     'Get-DotNetInstallation'
+    'Uninstall-DotNetRuntime'
+    'Uninstall-DotNetSdk'
     'Update-DotNetRuntime'
     'Update-DotNetSdk'
 )
@@ -281,5 +283,164 @@ Assert-Condition (
     $ownershipCheck.RuntimeManagementSource -eq 'VisualStudio' -and
     -not $ownershipCheck.RuntimeUpdateable
 ) 'A Visual Studio runtime payload was not kept read-only.'
+
+Write-Host 'Checking uninstall selection, confirmation, and execution...'
+$uninstallCheck = & $module {
+    $script:PromptCount = 0
+    $script:PlanCount = 0
+    $script:Selected = @()
+    $script:Answer = 'n'
+    $script:Started = @()
+    $script:ExitCode = 3010
+    $script:SelectionCount = 0
+    $script:SignatureValid = $true
+
+    $sdk = [pscustomobject] @{
+        ProductType = 'Sdk'; Version = '8.0.425'
+        VersionInfo = New-SdkVersionInfo -Text '8.0.425'
+        Architecture = 'x64'; Rid = 'win-x64'; InstallerKind = 'Bundle'
+        IsUninstallable = $true; DisplayName = 'Microsoft .NET SDK 8.0.425 (x64)'
+        BundleCachePath = 'C:\cache\dotnet-sdk.exe'; UninstallString = ''
+    }
+    $runtime = [pscustomobject] @{
+        ProductType = 'Runtime'; Version = '8.0.31'
+        VersionInfo = New-SdkVersionInfo -Text '8.0.31'
+        Architecture = 'x64'; Rid = 'win-x64'; InstallerKind = 'Bundle'
+        IsUninstallable = $true; DisplayName = 'Microsoft .NET Runtime 8.0.31 (x64)'
+        BundleCachePath = 'C:\cache\dotnet-runtime.exe'; UninstallString = ''
+    }
+    $readOnly = [pscustomobject] @{
+        ProductType = 'Sdk'; Version = '8.0.424'
+        VersionInfo = New-SdkVersionInfo -Text '8.0.424'
+        Architecture = 'x64'; Rid = 'win-x64'; InstallerKind = 'Bundle'
+        IsUninstallable = $false; DisplayName = 'Visual Studio SDK'
+    }
+    $payload = [pscustomobject] @{
+        ProductType = 'Runtime'; Version = '8.0.30'
+        VersionInfo = New-SdkVersionInfo -Text '8.0.30'
+        Architecture = 'x64'; Rid = 'win-x64'; InstallerKind = 'Payload'
+        IsUninstallable = $false; DisplayName = 'Shared MSI Runtime'
+    }
+    function Get-DotNetInstallationInventory { return @($sdk, $runtime, $readOnly, $payload) }
+    function Read-Host { param($Prompt) $script:PromptCount++; return $script:Answer }
+    function Invoke-DotNetUninstallPlan {
+        param([object[]] $Installations)
+        $script:PlanCount++
+        $script:Selected = @($Installations)
+    }
+    function Select-UpdateCandidates {
+        param([object[]] $Candidates, [string] $Action)
+        $script:SelectionCount++
+        if ($Action -ne 'uninstall') { throw 'Incorrect checklist action.' }
+        return @($Candidates | Where-Object ProductType -eq 'Sdk')
+    }
+
+    Uninstall-DotNetSdk -VersionBand 8.0 -WhatIf
+    $whatIfSafe = $script:PlanCount -eq 0 -and $script:PromptCount -eq 0
+
+    Uninstall-DotNetSdk -UninstallAll
+    $declined = $script:PlanCount -eq 0 -and $script:PromptCount -eq 1
+
+    $script:Answer = 'yes'
+    Uninstall-DotNetSdk -VersionBand 8.0.4xx
+    $confirmed = $script:PlanCount -eq 1 -and
+        $script:Selected.Count -eq 1 -and
+        $script:Selected[0].Version -eq '8.0.425'
+
+    Uninstall-DotNetRuntime -ProductType Runtime -Architecture x64 -UninstallAll -Force
+    $forced = $script:PlanCount -eq 2 -and $script:PromptCount -eq 2 -and
+        $script:Selected.Count -eq 1 -and $script:Selected[0].ProductType -eq 'Runtime'
+
+    Uninstall-DotNetSdk -Force
+    $interactive = $script:SelectionCount -eq 1 -and $script:PlanCount -eq 3
+
+    function Get-DotNetUninstallExecutable {
+        param($Installation)
+        return $Installation.BundleCachePath
+    }
+    function Assert-InstallerSignature {
+        param($InstallerPath, $ProductLabel, $Version)
+        if (-not $script:SignatureValid) { throw 'Invalid installer signature.' }
+        return [pscustomobject] @{ SignerSubject = '.NET' }
+    }
+    function Start-Process {
+        param($FilePath, $ArgumentList, $Verb, [switch] $Wait, [switch] $PassThru)
+        $script:Started += [pscustomobject] @{
+            FilePath = $FilePath; Arguments = @($ArgumentList); Verb = $Verb
+        }
+        return [pscustomobject] @{ ExitCode = $script:ExitCode }
+    }
+    Remove-Item Function:Invoke-DotNetUninstallPlan
+    Invoke-DotNetUninstallPlan -Installations @($sdk)
+    $executed = $script:Started.Count -eq 1 -and
+        $script:Started[0].FilePath -eq $sdk.BundleCachePath -and
+        $script:Started[0].Verb -eq 'RunAs' -and
+        ($script:Started[0].Arguments -join ' ') -eq '/uninstall /quiet /norestart'
+
+    $script:ExitCode = 1603
+    $failed = $false
+    try {
+        Invoke-DotNetUninstallPlan -Installations @($sdk)
+    }
+    catch {
+        $failed = $_.Exception.Message -match 'exited with code 1603'
+    }
+
+    $script:SignatureValid = $false
+    $signatureRefused = $false
+    try {
+        Invoke-DotNetUninstallPlan -Installations @($sdk)
+    }
+    catch {
+        $signatureRefused = $_.Exception.Message -match 'Invalid installer signature' -and
+            $script:Started.Count -eq 2
+    }
+
+    Remove-Item Function:Get-DotNetUninstallExecutable
+    $cacheDirectory = Join-Path ([IO.Path]::GetTempPath()) `
+        ('dotnet-steward-verify-' + [guid]::NewGuid().ToString('N'))
+    [void] (New-Item -Path $cacheDirectory -ItemType Directory)
+    try {
+        $goodPath = Join-Path $cacheDirectory 'dotnet-sdk-8.0.425-win-x64.exe'
+        $wrongPath = Join-Path $cacheDirectory 'dotnet-sdk-9.0.100-win-x64.exe'
+        [void] (New-Item -Path $goodPath -ItemType File)
+        [void] (New-Item -Path $wrongPath -ItemType File)
+        $sdk.BundleCachePath = ''
+        $sdk.UninstallString = "`"$goodPath`" /uninstall"
+        $pathValid = (Get-DotNetUninstallExecutable -Installation $sdk) -eq $goodPath
+        $sdk.BundleCachePath = $wrongPath
+        $wrongRefused = $false
+        try {
+            [void] (Get-DotNetUninstallExecutable -Installation $sdk)
+        }
+        catch {
+            $wrongRefused = $_.Exception.Message -match 'does not match'
+        }
+        $sdk.BundleCachePath = Join-Path $cacheDirectory 'missing.exe'
+        $missingRefused = $false
+        try {
+            [void] (Get-DotNetUninstallExecutable -Installation $sdk)
+        }
+        catch {
+            $missingRefused = $_.Exception.Message -match 'not found'
+        }
+    }
+    finally {
+        Remove-Item -LiteralPath $cacheDirectory -Recurse -Force
+    }
+
+    [pscustomobject] @{
+        WhatIfSafe = $whatIfSafe; Declined = $declined
+        Confirmed = $confirmed; Forced = $forced
+        Interactive = $interactive; Executed = $executed; Failed = $failed
+        SignatureRefused = $signatureRefused
+        PathValid = $pathValid; WrongRefused = $wrongRefused; MissingRefused = $missingRefused
+    }
+}
+foreach ($propertyName in @('WhatIfSafe', 'Declined', 'Confirmed', 'Forced',
+    'Interactive', 'Executed', 'Failed', 'SignatureRefused', 'PathValid',
+    'WrongRefused', 'MissingRefused')) {
+    Assert-Condition $uninstallCheck.$propertyName "Uninstall check '$propertyName' failed."
+}
 
 Write-Host 'DotNetSteward verification passed.'

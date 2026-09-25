@@ -1,6 +1,6 @@
 # DotNetSteward
 
-DotNetSteward is a Windows PowerShell module for inventorying and updating
+DotNetSteward is a Windows PowerShell module for inventorying, updating, and uninstalling
 official Microsoft .NET SDK and runtime installations managed by Windows
 installers.
 
@@ -13,6 +13,7 @@ payloads remain visible in the inventory but are deliberately read-only.
 - Windows
 - Windows PowerShell 5.1 or PowerShell 7+
 - Internet access to Microsoft's official .NET release metadata and downloads
+  for updates (not required for uninstalls)
 - Administrator approval when an installer needs to modify the machine
 
 Daily builds and archive-based installations are not currently supported.
@@ -74,6 +75,26 @@ Update-DotNetRuntime -VersionBand 8.0 -Architecture x64 -UpdateScope Major
 
 Runtime update scopes are `Patch` and `Major`. Only standalone runtime EXE
 bundles are updateable; shared MSI payloads are never modified directly.
+
+## Uninstall standalone installations
+
+```powershell
+Uninstall-DotNetSdk
+Uninstall-DotNetSdk -VersionBand 8.0.4xx
+Uninstall-DotNetSdk -UninstallAll -Force
+Uninstall-DotNetRuntime -ProductType WindowsDesktopRuntime -Architecture x64 -VersionBand 8.0
+Uninstall-DotNetRuntime -UninstallAll -WhatIf
+```
+
+Interactive checklists start with nothing selected. `-VersionBand` and
+`-UninstallAll` skip the checklist but still ask for explicit confirmation;
+`-Force` skips that confirmation. `-WhatIf` previews the selected installations
+without prompting or uninstalling. `-Confirm` uses PowerShell's additional
+ShouldProcess confirmation. Uninstallation runs the locally cached, signed
+Microsoft bundle with `/uninstall /quiet /norestart` and may request UAC
+approval. If the cached installer is missing, the command fails without
+attempting that uninstall. Shared MSI payloads and Visual Studio-managed
+installations are not eligible. No internet connection is required to uninstall.
 
 ## Preview releases
 

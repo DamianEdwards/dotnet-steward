@@ -20,11 +20,14 @@ $privateScripts = @(
     'Private\Downloads.ps1'
     'Private\InstallerTrust.ps1'
     'Private\Installation.ps1'
+    'Private\Uninstallation.ps1'
 )
 $publicScripts = @(
     'Public\Get-DotNetInstallation.ps1'
     'Public\Update-DotNetSdk.ps1'
     'Public\Update-DotNetRuntime.ps1'
+    'Public\Uninstall-DotNetSdk.ps1'
+    'Public\Uninstall-DotNetRuntime.ps1'
 )
 
 foreach ($relativePath in @($privateScripts + $publicScripts)) {
@@ -35,4 +38,6 @@ Export-ModuleMember -Function @(
     'Get-DotNetInstallation'
     'Update-DotNetRuntime'
     'Update-DotNetSdk'
+    'Uninstall-DotNetRuntime'
+    'Uninstall-DotNetSdk'
 )
