@@ -24,15 +24,21 @@ function Get-NativeDotNetArchitecture {
     }
 }
 
-function Assert-DotNetChannels {
+function ConvertTo-DotNetChannels {
     param(
         [Parameter(Mandatory = $true)]
         [string[]] $Channels
     )
 
     foreach ($channel in $Channels) {
-        if ($channel -notmatch '^\d+\.\d+$') {
-            throw "Invalid .NET channel '$channel'. Use a major/minor channel such as 8.0."
+        if ($channel -match '^\d+$') {
+            "$channel.0"
+        }
+        elseif ($channel -match '^\d+\.\d+$') {
+            $channel
+        }
+        else {
+            throw "Invalid .NET channel '$channel'. Use a major version such as 8 or a major/minor channel such as 8.0."
         }
     }
 }

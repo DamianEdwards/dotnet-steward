@@ -91,6 +91,11 @@ Inventory records include the product type, semantic version, payload
 architecture, management source, owners, and whether DotNetSteward can update
 or uninstall the installation.
 
+If no Windows installer-managed installations are found,
+`Get-DotNetInstallation` prints a message rather than an empty table. A
+different message indicates that installations exist but none match the
+requested filters. Neither message adds an object to the data pipeline.
+
 The default table includes **EOL date** and **Days to EOL** columns before
 **Status**. The date is the channel's end-of-support date, formatted as
 `yyyy-MM-dd`. Days to EOL is the difference from the current local time, rounded
@@ -150,6 +155,17 @@ channel or feature-band searches, and `-Architecture` to request x64, x86, or
 Arm64 installers. Exact prerelease versions do not require
 `-IncludePreview`.
 
+The find and install commands accept a major version as shorthand for its
+`.0` channel: `-Channel 11` means `-Channel '11.0'`. Multiple and mixed
+selectors are supported, for example `-Channel 8, 10, 11` or
+`-Channel '2.1', 8`. Quote explicit major/minor channels to preserve their
+minor version. Preview-only channels still require `-IncludePreview`.
+
+The find commands print a message when no official Windows releases match
+the requested filters, while returning no data objects. Install commands fail
+explicitly if any requested release cannot be resolved; update and uninstall
+commands report when no eligible installations or updates match.
+
 ## Install SDKs and runtimes
 
 Fresh installs do not require an existing .NET installation:
@@ -170,6 +186,29 @@ is specified. Both install commands default to the native Windows architecture
 and support installing multiple versions, channels, product types, or
 architectures in one operation. Downloads run in parallel; installers run
 sequentially from lowest to highest version.
+
+Install, update, and uninstall commands request administrator approval once
+for a batch of multiple installer operations, then run them sequentially in
+an elevated PowerShell worker. A single operation retains per-installer
+elevation. Use `-Elevate` to request the worker even for a single operation,
+or `-Elevate:$false` to retain per-installer elevation for a batch:
+
+```powershell
+Install-DotNetRuntime -Channel 8, 10 -Elevate:$false
+Update-DotNetRuntime -UpdateAll -Elevate:$false
+Uninstall-DotNetSdk -UninstallAll -Elevate:$false
+```
+
+An already-elevated shell does not start another worker or request additional
+approval. Selection and confirmation happen before elevation; `-WhatIf` never
+starts a worker and reports whether the current shell would request approval
+once for a worker, separately for each installer, or not at all because it is
+already elevated. The preview reflects `-Elevate` overrides and the number of
+selected operations; Windows UAC policy determines whether an approval request
+shows a consent or credential dialog. The worker uses the same PowerShell
+edition, revalidates installer trust before execution, and rechecks uninstall
+eligibility against the current registry inventory. Cancelling elevation or a
+failed installer stops the operation; completed operations are not rolled back.
 
 ## Update SDKs
 
@@ -218,8 +257,8 @@ Interactive checklists start with nothing selected. `-VersionBand` and
 `-Force` skips that confirmation. `-WhatIf` previews the selected installations
 without prompting or uninstalling. `-Confirm` uses PowerShell's additional
 ShouldProcess confirmation. Uninstallation runs the locally cached, signed
-Microsoft bundle with `/uninstall /quiet /norestart` and may request UAC
-approval. If the cached installer is missing, the command fails without
+Microsoft bundle with `/uninstall /passive /norestart` by default and may
+request UAC approval. If the cached installer is missing, the command fails without
 attempting that uninstall. Shared MSI payloads and Visual Studio-managed
 installations are not eligible. No internet connection is required to uninstall.
 
@@ -241,7 +280,23 @@ DotNetSteward:
 6. Uses unattended installer arguments by default while allowing Windows to
    request UAC elevation.
 
-Use `-InteractiveInstaller` to display each installer's UI.
+Install, update, and uninstall commands default to `-InstallerMode Passive`,
+which shows installer progress UI but proceeds without installation-choice
+prompts. Use `-InstallerMode Quiet` for no installer UI, or
+`-InstallerMode Interactive` for full installer UI. All modes use `/norestart`;
+UAC, selection, and uninstall confirmation prompts are independent of the
+installer mode.
+
+```powershell
+Install-DotNetSdk -Channel 8, 10 -InstallerMode Passive
+Update-DotNetRuntime -UpdateAll -InstallerMode Quiet
+Uninstall-DotNetSdk -UninstallAll -InstallerMode Interactive
+```
+
+The existing `-InteractiveInstaller` switch on install and update commands
+remains supported as shorthand for `-InstallerMode Interactive`. Combining it
+with an explicit Quiet or Passive mode is an error. `-InteractiveInstaller:$false`
+uses the default Passive mode unless `-InstallerMode` is specified.
 
 ## Repository layout
 

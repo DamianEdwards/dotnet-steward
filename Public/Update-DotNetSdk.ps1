@@ -23,7 +23,7 @@ function Update-DotNetSdk {
 
     Supplying VersionBand or UpdateAll disables selection and confirmation
     prompts. Installers still request UAC elevation when the shell is not already
-    elevated. Installer UI is disabled by default.
+    elevated. Unattended installer progress UI is shown by default.
 
     .PARAMETER UpdateScope
     Limits updates to Patch, FeatureBand, or Major. The default is FeatureBand.
@@ -42,8 +42,16 @@ function Update-DotNetSdk {
     prerelease.
 
     .PARAMETER InteractiveInstaller
-    Shows the installer's full UI. Without this switch, installers run with
-    /install /quiet /norestart.
+    Compatibility switch for -InstallerMode Interactive.
+
+    .PARAMETER InstallerMode
+    Selects Quiet (no UI), Passive (unattended progress UI, the default), or
+    Interactive (full installer UI). All modes suppress automatic restarts.
+
+    .PARAMETER Elevate
+    Runs selected installers in one elevated PowerShell worker. Defaults to
+    enabled for multiple installers and disabled for a single installer.
+    Use -Elevate:$false to retain per-installer elevation.
 
     .EXAMPLE
     Update-DotNetSdk
@@ -92,9 +100,15 @@ function Update-DotNetSdk {
         [Alias('AllowPreview')]
         [switch] $IncludePreview,
 
-        [switch] $InteractiveInstaller
+        [switch] $InteractiveInstaller,
+
+        [ValidateSet('Quiet', 'Passive', 'Interactive')]
+        [string] $InstallerMode = 'Passive',
+
+        [switch] $Elevate
     )
 
+    $InstallerMode = Resolve-DotNetInstallerMode -BoundParameters $PSBoundParameters
     $originalSecurityProtocol = [Net.ServicePointManager]::SecurityProtocol
     try {
         [Net.ServicePointManager]::SecurityProtocol =
@@ -166,15 +180,22 @@ function Update-DotNetSdk {
         $targetVersions += "$($candidate.TargetVersion) ($($candidate.Rid))"
     }
     $targetDescription = $targetVersions -join ', '
+    $elevationParameters = @{}
+    if ($PSBoundParameters.ContainsKey('Elevate')) {
+        $elevationParameters.Elevate = [bool] $Elevate
+    }
     if (-not $PSCmdlet.ShouldProcess(
         ".NET SDK version(s) $targetDescription",
         'Download and install official SDK updates'
     )) {
+        if ($WhatIfPreference) {
+            Show-DotNetElevationPreview @elevationParameters -OperationCount $candidates.Count
+        }
         return
     }
 
-    Invoke-DotNetInstallerPlan -Candidates $candidates `
-        -ShowInstallerUi ([bool] $InteractiveInstaller)
+    Invoke-DotNetInstallerPlan @elevationParameters -Candidates $candidates `
+        -InstallerMode $InstallerMode
     }
     finally {
         [Net.ServicePointManager]::SecurityProtocol = $originalSecurityProtocol

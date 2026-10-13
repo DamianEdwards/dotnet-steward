@@ -23,6 +23,7 @@ function Install-DotNetRuntime {
 
     .PARAMETER Channel
     Installs the latest stable runtime in each specified major/minor channel.
+    A major version such as 11 is shorthand for 11.0.
 
     .PARAMETER Architecture
     Selects x64, x86, or arm64 Windows installers. Defaults to the native
@@ -33,7 +34,16 @@ function Install-DotNetRuntime {
     it is newer than the latest stable release.
 
     .PARAMETER InteractiveInstaller
-    Shows the installer's UI instead of using /install /quiet /norestart.
+    Compatibility switch for -InstallerMode Interactive.
+
+    .PARAMETER InstallerMode
+    Selects Quiet (no UI), Passive (unattended progress UI, the default), or
+    Interactive (full installer UI). All modes suppress automatic restarts.
+
+    .PARAMETER Elevate
+    Runs selected installers in one elevated PowerShell worker. Defaults to
+    enabled for multiple installers and disabled for a single installer.
+    Use -Elevate:$false to retain per-installer elevation.
 
     .EXAMPLE
     Install-DotNetRuntime -Version 8.0.25
@@ -46,7 +56,7 @@ function Install-DotNetRuntime {
     Installs the latest stable ASP.NET Core Runtime in the .NET 8 channel.
 
     .EXAMPLE
-    Install-DotNetRuntime -ProductType WindowsDesktopRuntime -Channel 11.0 -IncludePreview
+    Install-DotNetRuntime -ProductType WindowsDesktopRuntime -Channel 11 -IncludePreview
 
     Installs the latest .NET 11 Windows Desktop Runtime, including prereleases.
     #>
@@ -79,9 +89,15 @@ function Install-DotNetRuntime {
 
         [switch] $IncludePreview,
 
-        [switch] $InteractiveInstaller
+        [switch] $InteractiveInstaller,
+
+        [ValidateSet('Quiet', 'Passive', 'Interactive')]
+        [string] $InstallerMode = 'Passive',
+
+        [switch] $Elevate
     )
 
+    $InstallerMode = Resolve-DotNetInstallerMode -BoundParameters $PSBoundParameters
     Assert-DotNetStewardPlatform
     if (-not $PSBoundParameters.ContainsKey('Architecture')) {
         $Architecture = @(Get-NativeDotNetArchitecture)
@@ -98,6 +114,7 @@ function Install-DotNetRuntime {
             $Version
         }
         'Channel' {
+            $Channel = @(ConvertTo-DotNetChannels -Channels $Channel)
             $findParameters.Channel = $Channel
             if ($IncludePreview) {
                 $findParameters.IncludePreview = $true
@@ -115,14 +132,21 @@ function Install-DotNetRuntime {
     $targets = @($candidates | ForEach-Object {
         "$($_.ProductLabel) $($_.TargetVersion) ($($_.Rid))"
     })
+    $elevationParameters = @{}
+    if ($PSBoundParameters.ContainsKey('Elevate')) {
+        $elevationParameters.Elevate = [bool] $Elevate
+    }
     if (-not $PSCmdlet.ShouldProcess(
         ($targets -join ', '),
         'Download and install official runtime'
     )) {
+        if ($WhatIfPreference) {
+            Show-DotNetElevationPreview @elevationParameters -OperationCount $candidates.Count
+        }
         return
     }
 
-    Invoke-DotNetInstallerPlan -Candidates $candidates `
-        -ShowInstallerUi ([bool] $InteractiveInstaller) `
+    Invoke-DotNetInstallerPlan @elevationParameters -Candidates $candidates `
+        -InstallerMode $InstallerMode `
         -CompletionSubject installations
 }

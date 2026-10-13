@@ -47,6 +47,7 @@ function Test-VersionBandMatch {
 function Select-InstallationsByVersionBand {
     param(
         [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
         [object[]] $Installations,
 
         [Parameter(Mandatory = $true)]

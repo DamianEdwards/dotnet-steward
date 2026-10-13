@@ -23,6 +23,15 @@ function Uninstall-DotNetSdk {
     .PARAMETER Force
     Skips the explicit uninstall confirmation (but not -Confirm).
 
+    .PARAMETER InstallerMode
+    Selects Quiet (no UI), Passive (unattended progress UI, the default), or
+    Interactive (full installer UI). All modes suppress automatic restarts.
+
+    .PARAMETER Elevate
+    Runs selected uninstalls in one elevated PowerShell worker. Defaults to
+    enabled for multiple uninstalls and disabled for a single uninstall.
+    Use -Elevate:$false to retain per-installer elevation.
+
     .EXAMPLE
     Uninstall-DotNetSdk
 
@@ -46,7 +55,12 @@ function Uninstall-DotNetSdk {
         [ValidateSet('x64', 'x86', 'arm64')]
         [string[]] $Architecture,
 
-        [switch] $Force
+        [switch] $Force,
+
+        [ValidateSet('Quiet', 'Passive', 'Interactive')]
+        [string] $InstallerMode = 'Passive',
+
+        [switch] $Elevate
     )
 
     if ($env:OS -ne 'Windows_NT') {
@@ -68,6 +82,11 @@ function Uninstall-DotNetSdk {
             -Installations $installations -VersionBand $VersionBand)
     }
 
-    Invoke-DotNetUninstallSelection -Installations $installations `
-        -ParameterSetName $PSCmdlet.ParameterSetName -Force ([bool] $Force) -Cmdlet $PSCmdlet
+    $elevationParameters = @{}
+    if ($PSBoundParameters.ContainsKey('Elevate')) {
+        $elevationParameters.Elevate = [bool] $Elevate
+    }
+    Invoke-DotNetUninstallSelection @elevationParameters -Installations $installations `
+        -ParameterSetName $PSCmdlet.ParameterSetName -Force ([bool] $Force) -Cmdlet $PSCmdlet `
+        -InstallerMode $InstallerMode
 }

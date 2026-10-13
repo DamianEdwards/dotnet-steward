@@ -20,6 +20,7 @@ function Install-DotNetSdk {
 
     .PARAMETER Channel
     Installs the latest stable SDK in each specified major/minor channel.
+    A major version such as 11 is shorthand for 11.0.
 
     .PARAMETER VersionBand
     Installs the latest stable SDK in each specified feature band.
@@ -33,7 +34,16 @@ function Install-DotNetSdk {
     candidate when it is newer than the latest stable release.
 
     .PARAMETER InteractiveInstaller
-    Shows the installer's UI instead of using /install /quiet /norestart.
+    Compatibility switch for -InstallerMode Interactive.
+
+    .PARAMETER InstallerMode
+    Selects Quiet (no UI), Passive (unattended progress UI, the default), or
+    Interactive (full installer UI). All modes suppress automatic restarts.
+
+    .PARAMETER Elevate
+    Runs selected installers in one elevated PowerShell worker. Defaults to
+    enabled for multiple installers and disabled for a single installer.
+    Use -Elevate:$false to retain per-installer elevation.
 
     .EXAMPLE
     Install-DotNetSdk -Version 8.0.419
@@ -51,7 +61,7 @@ function Install-DotNetSdk {
     Installs the latest stable SDK in the 8.0.4xx feature band.
 
     .EXAMPLE
-    Install-DotNetSdk -Channel 11.0 -IncludePreview
+    Install-DotNetSdk -Channel 11 -IncludePreview
 
     Installs the latest available .NET 11 SDK, including prereleases.
     #>
@@ -84,9 +94,15 @@ function Install-DotNetSdk {
 
         [switch] $IncludePreview,
 
-        [switch] $InteractiveInstaller
+        [switch] $InteractiveInstaller,
+
+        [ValidateSet('Quiet', 'Passive', 'Interactive')]
+        [string] $InstallerMode = 'Passive',
+
+        [switch] $Elevate
     )
 
+    $InstallerMode = Resolve-DotNetInstallerMode -BoundParameters $PSBoundParameters
     Assert-DotNetStewardPlatform
     if (-not $PSBoundParameters.ContainsKey('Architecture')) {
         $Architecture = @(Get-NativeDotNetArchitecture)
@@ -102,6 +118,7 @@ function Install-DotNetSdk {
             $Version
         }
         'Channel' {
+            $Channel = @(ConvertTo-DotNetChannels -Channels $Channel)
             $findParameters.Channel = $Channel
             if ($IncludePreview) {
                 $findParameters.IncludePreview = $true
@@ -126,14 +143,21 @@ function Install-DotNetSdk {
     $targets = @($candidates | ForEach-Object {
         "$($_.ProductLabel) $($_.TargetVersion) ($($_.Rid))"
     })
+    $elevationParameters = @{}
+    if ($PSBoundParameters.ContainsKey('Elevate')) {
+        $elevationParameters.Elevate = [bool] $Elevate
+    }
     if (-not $PSCmdlet.ShouldProcess(
         ($targets -join ', '),
         'Download and install official SDK'
     )) {
+        if ($WhatIfPreference) {
+            Show-DotNetElevationPreview @elevationParameters -OperationCount $candidates.Count
+        }
         return
     }
 
-    Invoke-DotNetInstallerPlan -Candidates $candidates `
-        -ShowInstallerUi ([bool] $InteractiveInstaller) `
+    Invoke-DotNetInstallerPlan @elevationParameters -Candidates $candidates `
+        -InstallerMode $InstallerMode `
         -CompletionSubject installations
 }

@@ -12,8 +12,12 @@ function Find-DotNetSdk {
     IncludePreview allows prerelease SDKs when searching by channel or feature
     band. An explicitly requested prerelease version does not require it.
 
+    Prints an informational message and returns no data objects when no
+    official Windows SDK releases match the requested filters.
+
     .PARAMETER Channel
     Limits results to one or more major/minor channels, such as 8.0 or 10.0.
+    A major version such as 11 is shorthand for 11.0.
 
     .PARAMETER VersionBand
     Limits results to one or more SDK feature bands, such as 8.0.4xx.
@@ -39,7 +43,7 @@ function Find-DotNetSdk {
     Finds the latest stable SDK in every official release channel.
 
     .EXAMPLE
-    Find-DotNetSdk -Channel 8.0
+    Find-DotNetSdk -Channel 8
 
     Finds the latest stable .NET 8 SDK for the native architecture.
 
@@ -79,7 +83,7 @@ function Find-DotNetSdk {
 
     Assert-DotNetStewardPlatform
     if ($PSBoundParameters.ContainsKey('Channel')) {
-        Assert-DotNetChannels -Channels $Channel
+        $Channel = @(ConvertTo-DotNetChannels -Channels $Channel)
     }
     if ($PSCmdlet.ParameterSetName -eq 'VersionBand') {
         Assert-SdkFeatureBands -VersionBands $VersionBand
@@ -97,11 +101,19 @@ function Find-DotNetSdk {
             $originalSecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
         $releaseIndex = @(Get-ReleaseIndex)
-        return Get-AvailableSdkReleases -ReleaseIndex $releaseIndex `
+        $releases = @(Get-AvailableSdkReleases -ReleaseIndex $releaseIndex `
             -Architectures $Architecture -Channels $Channel `
             -VersionBands $VersionBand -Versions $Version `
             -IncludePreview ([bool] $IncludePreview) `
-            -AllVersions ([bool] $AllVersions)
+            -AllVersions ([bool] $AllVersions))
+        if ($releases.Count -eq 0) {
+            Write-Host 'No official Windows .NET SDK releases matched the requested filters.'
+            if ($PSCmdlet.ParameterSetName -ne 'Version' -and -not $IncludePreview) {
+                Write-Host 'Use -IncludePreview to include preview and release-candidate releases.'
+            }
+            return
+        }
+        return $releases
     }
     finally {
         [Net.ServicePointManager]::SecurityProtocol = $originalSecurityProtocol

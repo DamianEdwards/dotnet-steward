@@ -41,13 +41,26 @@ function Get-DotNetUninstallExecutable {
 function Invoke-DotNetUninstallPlan {
     param(
         [Parameter(Mandatory = $true)]
-        [object[]] $Installations
+        [object[]] $Installations,
+
+        [ValidateSet('Quiet', 'Passive', 'Interactive')]
+        [string] $InstallerMode = 'Passive',
+
+        [Nullable[bool]] $Elevate
     )
 
     $restartRequired = $false
-    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-    $principal = New-Object Security.Principal.WindowsPrincipal($identity)
-    $isAdministrator = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    $elevationPlan = Get-DotNetElevationPlan -OperationCount $Installations.Count -Elevate $Elevate
+    $isAdministrator = $elevationPlan.IsAdministrator
+    if ($elevationPlan.UseWorker) {
+        $restartRequired = Invoke-DotNetElevatedOperation -Action Uninstall -Items $Installations `
+            -InstallerMode $InstallerMode
+        Write-Host 'Selected .NET installations were uninstalled successfully.'
+        if ($restartRequired) {
+            Write-Host 'Restart Windows to complete the selected .NET uninstalls.'
+        }
+        return $restartRequired
+    }
 
     foreach ($installation in $Installations) {
         $path = Get-DotNetUninstallExecutable -Installation $installation
@@ -60,8 +73,9 @@ function Invoke-DotNetUninstallPlan {
         }
 
         try {
+            $arguments = @(Get-DotNetInstallerArguments -Action Uninstall -InstallerMode $InstallerMode)
             $process = Start-Process -FilePath $path `
-                -ArgumentList @('/uninstall', '/quiet', '/norestart') -Verb RunAs -Wait -PassThru
+                -ArgumentList $arguments -Verb RunAs -Wait -PassThru
         }
         catch {
             $nativeErrorCodeProperty = $_.Exception.PSObject.Properties['NativeErrorCode']
@@ -86,11 +100,13 @@ function Invoke-DotNetUninstallPlan {
     if ($restartRequired) {
         Write-Host 'Restart Windows to complete the selected .NET uninstalls.'
     }
+    return $restartRequired
 }
 
 function Select-DotNetUninstallVersionBand {
     param(
         [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
         [object[]] $Installations,
 
         [Parameter(Mandatory = $true)]
@@ -115,6 +131,7 @@ function Select-DotNetUninstallVersionBand {
 function Invoke-DotNetUninstallSelection {
     param(
         [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
         [object[]] $Installations,
 
         [Parameter(Mandatory = $true)]
@@ -124,7 +141,12 @@ function Invoke-DotNetUninstallSelection {
         [bool] $Force,
 
         [Parameter(Mandatory = $true)]
-        [System.Management.Automation.PSCmdlet] $Cmdlet
+        [System.Management.Automation.PSCmdlet] $Cmdlet,
+
+        [ValidateSet('Quiet', 'Passive', 'Interactive')]
+        [string] $InstallerMode = 'Passive',
+
+        [Nullable[bool]] $Elevate
     )
 
     if ($Installations.Count -eq 0) {
@@ -151,6 +173,9 @@ function Invoke-DotNetUninstallSelection {
         "$($_.ProductType) $($_.Version) ($($_.Rid))"
     })
     if (-not $Cmdlet.ShouldProcess(($targets -join ', '), 'Uninstall standalone .NET installations')) {
+        if ($WhatIfPreference) {
+            Show-DotNetElevationPreview -OperationCount $Installations.Count -Elevate $Elevate
+        }
         return
     }
 
@@ -162,5 +187,6 @@ function Invoke-DotNetUninstallSelection {
         }
     }
 
-    Invoke-DotNetUninstallPlan -Installations $Installations
+    [void] (Invoke-DotNetUninstallPlan -Installations $Installations `
+        -InstallerMode $InstallerMode -Elevate $Elevate)
 }
