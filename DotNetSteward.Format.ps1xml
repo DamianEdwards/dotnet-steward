@@ -107,7 +107,34 @@
                 <ScriptBlock>if ($null -ne $_.EndOfSupportDate) { [int] [math]::Ceiling(($_.EndOfSupportDate - [datetime]::Now).TotalDays) }</ScriptBlock>
               </TableColumnItem>
               <TableColumnItem>
-                <PropertyName>SupportStatus</PropertyName>
+                <ScriptBlock>
+                  $status = [string] $_.SupportStatus
+                  $colorName = switch -Wildcard ($status) {
+                      'Up to date.' { 'Green' }
+                      'Patch * is available.' { 'Yellow' }
+                      '.NET * is going out of support soon.' { 'Yellow' }
+                      '.NET * is out of support.' { 'Red' }
+                  }
+                  if ([string]::IsNullOrEmpty($colorName)) {
+                      return $status
+                  }
+                  $icon = switch ($colorName) {
+                      'Green' { [char] 0x2713 }
+                      'Yellow' { [char] 0x26A0 }
+                      'Red' { [char] 0x2717 }
+                  }
+                  $displayStatus = "$icon $status"
+                  if ($PSVersionTable.PSVersion -lt [version] '7.2' -or
+                      -not $Host.UI.SupportsVirtualTerminal -or
+                      $PSStyle.OutputRendering -eq 'PlainText') {
+                      return $displayStatus
+                  }
+                  $color = $PSStyle.Foreground.$colorName
+                  if ([string]::IsNullOrEmpty($color)) {
+                      return $displayStatus
+                  }
+                  return "$color$displayStatus$($PSStyle.Reset)"
+                </ScriptBlock>
               </TableColumnItem>
             </TableColumnItems>
             <Wrap />
