@@ -254,6 +254,54 @@ $releaseDiscoveryChecks = & $module {
         $runtimeInstallPlanned = $false
     }
 
+    $integerSdk = @(Find-DotNetSdk -Channel 11 -Architecture x64 -IncludePreview)
+    $integerStableSdk = @(Find-DotNetSdk -Channel 11 -Architecture x64)
+    $integerRuntime = @(Find-DotNetRuntime -Channel 11 -Architecture x64 -IncludePreview)
+    $integerStableRuntime = @(Find-DotNetRuntime -Channel 11 -Architecture x64)
+    $integerSdkArray = @(Find-DotNetSdk -Channel 8, 11 -Architecture x64 -IncludePreview)
+    $mixedSdkArray = @(Find-DotNetSdk -Channel '8.0', 11 -Architecture x64 -IncludePreview)
+    $mixedRuntimeArray = @(Find-DotNetRuntime -Channel 8, '11.0' `
+        -Architecture x64 -IncludePreview)
+    $duplicateSdkChannels = @(Find-DotNetSdk -Channel 8, '8.0' -Architecture x64)
+    $normalizedChannels = @(ConvertTo-DotNetChannels -Channels @('2.1', 8, '11'))
+
+    $script:ChannelPlans = @()
+    function Invoke-DotNetInstallerPlan {
+        param($Candidates, $ShowInstallerUi, $CompletionSubject, $Elevate)
+        $script:ChannelPlans += ,@($Candidates)
+    }
+    Install-DotNetSdk -Channel 8, 11 -Architecture x64 -IncludePreview
+    Install-DotNetRuntime -Channel '8.0', 11 -Architecture x64, x86 `
+        -ProductType Runtime, WindowsDesktopRuntime -IncludePreview
+    Install-DotNetRuntime -Channel 8, '8.0' -Architecture x64
+    $integerInstallResolved = $script:ChannelPlans.Count -eq 3 -and
+        $script:ChannelPlans[0].Count -eq 2 -and
+        ($script:ChannelPlans[0].TargetVersion -join ',') -eq '11.0.100-rc.1,8.0.200' -and
+        $script:ChannelPlans[1].Count -eq 8 -and
+        $script:ChannelPlans[2].Count -eq 1
+
+    $invalidChannelRefused = $true
+    foreach ($command in @('Find-DotNetSdk', 'Find-DotNetRuntime',
+        'Install-DotNetSdk', 'Install-DotNetRuntime')) {
+        foreach ($selector in @('-1', '11.x', '11.0.1', '11-preview', ' ', '8,11')) {
+            $refused = $false
+            try {
+                & $command -Channel $selector -Architecture x64
+            }
+            catch {
+                $refused = $_.Exception.Message -like 'Invalid .NET channel*'
+            }
+            $invalidChannelRefused = $invalidChannelRefused -and $refused
+        }
+    }
+    $unavailableChannelRefused = $false
+    try {
+        Install-DotNetSdk -Channel 99 -Architecture x64
+    }
+    catch {
+        $unavailableChannelRefused = $_.Exception.Message -match "Channel '99.0'"
+    }
+
     [pscustomobject] @{
         DefaultSdkVersions = @($defaultSdks.Version)
         PreviewSdkVersion = $previewSdk.Version
@@ -266,6 +314,20 @@ $releaseDiscoveryChecks = & $module {
         AvailableReleaseTypeName = $defaultSdks[0].PSTypeNames[0]
         SdkInstallPlanned = $sdkInstallPlanned
         RuntimeInstallPlanned = $runtimeInstallPlanned
+        IntegerChannelsResolved = $integerSdk.Count -eq 1 -and
+            $integerSdk[0].Channel -eq '11.0' -and $integerSdk[0].Version -eq '11.0.100-rc.1' -and
+            $integerRuntime.Count -eq 3 -and
+            @($integerRuntime | Where-Object Channel -ne '11.0').Count -eq 0 -and
+            @($integerRuntime | Where-Object Version -ne '11.0.0-rc.1').Count -eq 0
+        IntegerPreviewGated = $integerStableSdk.Count -eq 0 -and $integerStableRuntime.Count -eq 0
+        ChannelArraysResolved = ($integerSdkArray.Version -join ',') -eq '11.0.100-rc.1,8.0.200' -and
+            ($mixedSdkArray.Version -join ',') -eq ($integerSdkArray.Version -join ',') -and
+            $mixedRuntimeArray.Count -eq 6 -and
+            $duplicateSdkChannels.Count -eq 1 -and
+            ($normalizedChannels -join ',') -eq '2.1,8.0,11.0'
+        IntegerInstallResolved = $integerInstallResolved
+        InvalidChannelRefused = $invalidChannelRefused
+        UnavailableChannelRefused = $unavailableChannelRefused
     }
 }
 Assert-Condition (
@@ -304,6 +366,194 @@ Assert-Condition (
     $releaseDiscoveryChecks.SdkInstallPlanned -and
     $releaseDiscoveryChecks.RuntimeInstallPlanned
 ) 'Fresh-install target planning failed under WhatIf.'
+foreach ($property in @('IntegerChannelsResolved', 'IntegerPreviewGated', 'ChannelArraysResolved',
+    'IntegerInstallResolved', 'InvalidChannelRefused', 'UnavailableChannelRefused')) {
+    Assert-Condition $releaseDiscoveryChecks.$property "Channel shorthand check '$property' failed."
+}
+
+Write-Host 'Checking empty-result feedback across public commands...'
+$emptyResultChecks = & $module {
+    $script:InventoryPresent = $false
+    $script:ReleasesPresent = $false
+    $script:MetadataRequests = 0
+    function Get-DotNetInstallationInventory {
+        if ($script:InventoryPresent) {
+            foreach ($product in @('Sdk', 'Runtime')) {
+                [pscustomobject] @{
+                    ProductType = $product; Version = '8.0.100'
+                    VersionInfo = New-SdkVersionInfo -Text '8.0.100'
+                    Architecture = 'x64'; Rid = 'win-x64'; InstallerKind = 'Bundle'
+                    IsUpdateable = $true; IsUninstallable = $true
+                    ManagementSource = 'Standalone'
+                }
+            }
+        }
+    }
+    function Get-DotNetSdkBundleInventory {
+        return Get-DotNetInstallationInventory | Where-Object ProductType -eq 'Sdk'
+    }
+    function Get-ReleaseIndex {
+        $script:MetadataRequests++
+        return [pscustomobject] @{
+            'channel-version' = '8.0'; 'support-phase' = 'active'; 'release-type' = 'lts'
+        }
+    }
+    function Get-ChannelSdkInstallers {
+        param($ChannelEntry, $Rid, $MetadataCache)
+        if ($script:ReleasesPresent) {
+            [pscustomobject] @{
+                Version = '8.0.100'; VersionInfo = New-SdkVersionInfo -Text '8.0.100'
+                Rid = $Rid; Url = 'https://example.invalid/sdk.exe'
+                Hash = 'A' * 128; HashAlgorithm = 'SHA512'
+            }
+        }
+    }
+    function Get-ChannelRuntimeInstallers {
+        param($ChannelEntry, $Rid, $ProductType, $MetadataCache)
+        if ($script:ReleasesPresent) {
+            [pscustomobject] @{
+                Version = '8.0.1'; VersionInfo = New-SdkVersionInfo -Text '8.0.1'
+                Rid = $Rid; Url = 'https://example.invalid/runtime.exe'
+                Hash = 'A' * 128; HashAlgorithm = 'SHA512'
+            }
+        }
+    }
+    function Get-UpdateCandidates { return @() }
+    function Get-RuntimeUpdateCandidates { return @() }
+    function Start-Process { throw 'Empty results must not start a process.' }
+    function Save-InstallersInParallel { throw 'Empty results must not download installers.' }
+    function Select-UpdateCandidates { throw 'Empty results must not show a checklist.' }
+    function Read-Host { throw 'Empty results must not prompt.' }
+
+    $inventoryCases = @(
+        @{ Command = 'Get-DotNetInstallation'; Parameters = @{};
+            Message = 'No Windows installer-managed .NET installations were found.' }
+        @{ Command = 'Get-DotNetInstallation'; Parameters = @{ ProductType = 'Runtime' };
+            Message = 'No Windows installer-managed .NET installations were found.' }
+        @{ Command = 'Update-DotNetSdk'; Parameters = @{ UpdateAll = $true };
+            Message = 'No standalone .NET SDK installer registrations were found.' }
+        @{ Command = 'Update-DotNetSdk'; Parameters = @{ VersionBand = '8.0' };
+            Message = 'No standalone .NET SDK installer registrations were found.' }
+        @{ Command = 'Update-DotNetRuntime'; Parameters = @{ UpdateAll = $true };
+            Message = 'No matching standalone .NET runtime installer registrations were found.' }
+        @{ Command = 'Update-DotNetRuntime'; Parameters = @{ VersionBand = '8.0' };
+            Message = 'No matching standalone .NET runtime installer registrations were found.' }
+    )
+    foreach ($command in @('Uninstall-DotNetSdk', 'Uninstall-DotNetRuntime')) {
+        foreach ($parameters in @(@{}, @{ UninstallAll = $true }, @{ VersionBand = '8.0' })) {
+            $inventoryCases += @{
+                Command = $command; Parameters = $parameters
+                Message = 'No matching uninstallable standalone .NET installations were found.'
+            }
+        }
+    }
+    $noInventoryFeedback = $true
+    foreach ($case in $inventoryCases) {
+        $parameters = $case.Parameters
+        $messages = @()
+        $data = @(& $case.Command @parameters -InformationVariable messages)
+        $text = @($messages | ForEach-Object { [string] $_.MessageData }) -join "`n"
+        $noInventoryFeedback = $noInventoryFeedback -and
+            $data.Count -eq 0 -and $text.Contains($case.Message)
+    }
+    $noInventoryNetworkSafe = $script:MetadataRequests -eq 0
+    $script:InventoryPresent = $true
+    $filterCases = @(
+        @{ Command = 'Get-DotNetInstallation'; Parameters = @{ ProductType = 'WindowsDesktopRuntime' };
+            Message = 'No Windows installer-managed .NET installations matched the requested filters.' }
+        @{ Command = 'Get-DotNetInstallation'; Parameters = @{ Architecture = 'arm64' };
+            Message = 'No Windows installer-managed .NET installations matched the requested filters.' }
+        @{ Command = 'Get-DotNetInstallation'; Parameters = @{ ManagementSource = 'VisualStudio' };
+            Message = 'No Windows installer-managed .NET installations matched the requested filters.' }
+        @{ Command = 'Update-DotNetSdk'; Parameters = @{ VersionBand = '99.0' };
+            Message = 'No installed .NET SDKs matched -VersionBand: 99.0.' }
+        @{ Command = 'Update-DotNetRuntime'; Parameters = @{ VersionBand = '99.0' };
+            Message = 'No standalone .NET runtimes matched -VersionBand: 99.0.' }
+    )
+    foreach ($command in @('Uninstall-DotNetSdk', 'Uninstall-DotNetRuntime')) {
+        foreach ($parameters in @(
+            @{ VersionBand = '99.0' },
+            @{ Architecture = 'arm64'; UninstallAll = $true },
+            @{ Architecture = 'arm64'; VersionBand = '8.0' }
+        )) {
+            $filterCases += @{
+                Command = $command; Parameters = $parameters
+                Message = 'No matching uninstallable standalone .NET installations were found.'
+            }
+        }
+    }
+    $filterFeedback = $true
+    foreach ($case in $filterCases) {
+        $parameters = $case.Parameters
+        $messages = @()
+        $data = @(& $case.Command @parameters -InformationVariable messages)
+        $text = @($messages | ForEach-Object { [string] $_.MessageData }) -join "`n"
+        $filterFeedback = $filterFeedback -and
+            $data.Count -eq 0 -and $text.Contains($case.Message)
+    }
+    $filteredInventoryNetworkSafe = $script:MetadataRequests -eq 0
+    $updateFeedback = $true
+    foreach ($command in @('Update-DotNetSdk', 'Update-DotNetRuntime')) {
+        $messages = @()
+        $data = @(& $command -UpdateAll -InformationVariable messages)
+        $text = @($messages | ForEach-Object { [string] $_.MessageData }) -join "`n"
+        $updateFeedback = $updateFeedback -and $data.Count -eq 0 -and
+            $text -match 'No eligible .*updates were found within .* scope\.'
+    }
+    $findFeedback = $true
+    $successfulFindData = $true
+    foreach ($command in @('Find-DotNetSdk', 'Find-DotNetRuntime')) {
+        foreach ($parameters in @(
+            @{ Channel = 8 }, @{ Channel = 8; IncludePreview = $true }, @{ Version = '8.0.100' }
+        )) {
+            $messages = @()
+            $data = @(& $command @parameters -Architecture x64 -InformationVariable messages)
+            $text = @($messages | ForEach-Object { [string] $_.MessageData }) -join "`n"
+            $expectedHint = $parameters.ContainsKey('Channel') -and
+                -not $parameters.ContainsKey('IncludePreview')
+            $findFeedback = $findFeedback -and $data.Count -eq 0 -and
+                $text -match 'No official Windows .NET .* releases matched the requested filters\.' -and
+                ($text.Contains('Use -IncludePreview') -eq $expectedHint)
+        }
+        $script:ReleasesPresent = $true
+        $messages = @()
+        $data = @(& $command -Channel 8 -Architecture x64 -InformationVariable messages)
+        $successfulFindData = $successfulFindData -and $data.Count -gt 0 -and
+            $messages.Count -eq 0 -and $data[0].PSTypeNames[0] -eq 'DotNetSteward.AvailableRelease'
+        $script:ReleasesPresent = $false
+    }
+    $installRefused = $true
+    foreach ($command in @('Install-DotNetSdk', 'Install-DotNetRuntime')) {
+        foreach ($parameters in @(@{ Channel = 8 }, @{ Version = '8.0.100' })) {
+            $refused = $false
+            try {
+                & $command @parameters -Architecture x64 -WhatIf
+            }
+            catch {
+                $refused = $_.Exception.Message -match 'No official x64 .* EXE installer was found'
+            }
+            $installRefused = $installRefused -and $refused
+        }
+    }
+    $script:InventoryPresent = $false
+    $invalidUninstallSelectorRefused = $true
+    foreach ($command in @('Uninstall-DotNetSdk', 'Uninstall-DotNetRuntime')) {
+        $refused = $false
+        try { & $command -VersionBand 'invalid' }
+        catch { $refused = $_.Exception.Message -like 'Invalid version-band selector*' }
+        $invalidUninstallSelectorRefused = $invalidUninstallSelectorRefused -and $refused
+    }
+    [pscustomobject] @{
+        NoInventoryFeedback = $noInventoryFeedback; NoInventoryNetworkSafe = $noInventoryNetworkSafe
+        FilterFeedback = $filterFeedback; FilteredInventoryNetworkSafe = $filteredInventoryNetworkSafe
+        UpdateFeedback = $updateFeedback; FindFeedback = $findFeedback
+        SuccessfulFindData = $successfulFindData; InstallRefused = $installRefused
+        InvalidUninstallSelectorRefused = $invalidUninstallSelectorRefused
+    }
+}
+foreach ($property in $emptyResultChecks.PSObject.Properties) {
+    Assert-Condition $property.Value "Empty-result check '$($property.Name)' failed."
+}
 
 Write-Host 'Checking installation support status...'
 $supportChecks = & $module {

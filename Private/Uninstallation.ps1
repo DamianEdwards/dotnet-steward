@@ -101,6 +101,7 @@ function Invoke-DotNetUninstallPlan {
 function Select-DotNetUninstallVersionBand {
     param(
         [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
         [object[]] $Installations,
 
         [Parameter(Mandatory = $true)]
@@ -125,6 +126,7 @@ function Select-DotNetUninstallVersionBand {
 function Invoke-DotNetUninstallSelection {
     param(
         [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
         [object[]] $Installations,
 
         [Parameter(Mandatory = $true)]

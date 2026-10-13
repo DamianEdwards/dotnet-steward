@@ -91,6 +91,11 @@ Inventory records include the product type, semantic version, payload
 architecture, management source, owners, and whether DotNetSteward can update
 or uninstall the installation.
 
+If no Windows installer-managed installations are found,
+`Get-DotNetInstallation` prints a message rather than an empty table. A
+different message indicates that installations exist but none match the
+requested filters. Neither message adds an object to the data pipeline.
+
 The default table includes **EOL date** and **Days to EOL** columns before
 **Status**. The date is the channel's end-of-support date, formatted as
 `yyyy-MM-dd`. Days to EOL is the difference from the current local time, rounded
@@ -150,6 +155,17 @@ channel or feature-band searches, and `-Architecture` to request x64, x86, or
 Arm64 installers. Exact prerelease versions do not require
 `-IncludePreview`.
 
+The find and install commands accept a major version as shorthand for its
+`.0` channel: `-Channel 11` means `-Channel '11.0'`. Multiple and mixed
+selectors are supported, for example `-Channel 8, 10, 11` or
+`-Channel '2.1', 8`. Quote explicit major/minor channels to preserve their
+minor version. Preview-only channels still require `-IncludePreview`.
+
+The find commands print a message when no official Windows releases match
+the requested filters, while returning no data objects. Install commands fail
+explicitly if any requested release cannot be resolved; update and uninstall
+commands report when no eligible installations or updates match.
+
 ## Install SDKs and runtimes
 
 Fresh installs do not require an existing .NET installation:
@@ -178,7 +194,7 @@ elevation. Use `-Elevate` to request the worker even for a single operation,
 or `-Elevate:$false` to retain per-installer elevation for a batch:
 
 ```powershell
-Install-DotNetRuntime -Channel '8.0', '10.0' -Elevate:$false
+Install-DotNetRuntime -Channel 8, 10 -Elevate:$false
 Update-DotNetRuntime -UpdateAll -Elevate:$false
 Uninstall-DotNetSdk -UninstallAll -Elevate:$false
 ```

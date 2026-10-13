@@ -23,6 +23,7 @@ function Install-DotNetRuntime {
 
     .PARAMETER Channel
     Installs the latest stable runtime in each specified major/minor channel.
+    A major version such as 11 is shorthand for 11.0.
 
     .PARAMETER Architecture
     Selects x64, x86, or arm64 Windows installers. Defaults to the native
@@ -51,7 +52,7 @@ function Install-DotNetRuntime {
     Installs the latest stable ASP.NET Core Runtime in the .NET 8 channel.
 
     .EXAMPLE
-    Install-DotNetRuntime -ProductType WindowsDesktopRuntime -Channel 11.0 -IncludePreview
+    Install-DotNetRuntime -ProductType WindowsDesktopRuntime -Channel 11 -IncludePreview
 
     Installs the latest .NET 11 Windows Desktop Runtime, including prereleases.
     #>
@@ -105,6 +106,7 @@ function Install-DotNetRuntime {
             $Version
         }
         'Channel' {
+            $Channel = @(ConvertTo-DotNetChannels -Channels $Channel)
             $findParameters.Channel = $Channel
             if ($IncludePreview) {
                 $findParameters.IncludePreview = $true

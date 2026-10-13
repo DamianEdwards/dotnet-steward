@@ -15,6 +15,10 @@ function Get-DotNetInstallation {
     cannot be retrieved, returns the local inventory with Unknown status and a
     warning. Installer ownership and updateability are not changed.
 
+    Prints an informational message when no registered installations are found
+    or no installations match the requested filters. Returns no data objects
+    in either case.
+
     .PARAMETER ProductType
     Limits results to one or more .NET product types.
 
@@ -74,6 +78,10 @@ function Get-DotNetInstallation {
     }
 
     $installations = @(Get-DotNetInstallationInventory)
+    if ($installations.Count -eq 0) {
+        Write-Host 'No Windows installer-managed .NET installations were found.'
+        return
+    }
     if ($PSBoundParameters.ContainsKey('ProductType')) {
         $installations = @($installations | Where-Object {
             $ProductType -contains $_.ProductType
@@ -88,6 +96,11 @@ function Get-DotNetInstallation {
         $installations = @($installations | Where-Object {
             $ManagementSource -contains $_.ManagementSource
         })
+    }
+
+    if ($installations.Count -eq 0) {
+        Write-Host 'No Windows installer-managed .NET installations matched the requested filters.'
+        return
     }
 
     Add-InstallationSupportStatus -Installations $installations -SkipSupportCheck:$SkipSupportCheck

@@ -9,11 +9,15 @@ function Find-DotNetRuntime {
     default, returns the latest stable release of each product in every channel
     for the native Windows architecture.
 
+    Prints an informational message and returns no data objects when no
+    official Windows runtime releases match the requested filters.
+
     .PARAMETER ProductType
     Limits results to Runtime, AspNetCoreRuntime, or WindowsDesktopRuntime.
 
     .PARAMETER Channel
     Limits results to one or more major/minor channels, such as 8.0 or 10.0.
+    A major version such as 11 is shorthand for 11.0.
 
     .PARAMETER Version
     Finds one or more exact runtime versions, including prerelease versions.
@@ -39,7 +43,7 @@ function Find-DotNetRuntime {
     Finds the latest stable .NET 8 Windows Desktop Runtime.
 
     .EXAMPLE
-    Find-DotNetRuntime -ProductType AspNetCoreRuntime -Channel 11.0 -IncludePreview
+    Find-DotNetRuntime -ProductType AspNetCoreRuntime -Channel 11 -IncludePreview
 
     Finds the latest ASP.NET Core Runtime in the .NET 11 channel, including
     prereleases.
@@ -74,7 +78,7 @@ function Find-DotNetRuntime {
 
     Assert-DotNetStewardPlatform
     if ($PSBoundParameters.ContainsKey('Channel')) {
-        Assert-DotNetChannels -Channels $Channel
+        $Channel = @(ConvertTo-DotNetChannels -Channels $Channel)
     }
     if ($PSCmdlet.ParameterSetName -eq 'Version') {
         Assert-ExactDotNetVersions -Versions $Version
@@ -89,11 +93,19 @@ function Find-DotNetRuntime {
             $originalSecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
         $releaseIndex = @(Get-ReleaseIndex)
-        return Get-AvailableRuntimeReleases -ReleaseIndex $releaseIndex `
+        $releases = @(Get-AvailableRuntimeReleases -ReleaseIndex $releaseIndex `
             -ProductTypes $ProductType -Architectures $Architecture `
             -Channels $Channel -Versions $Version `
             -IncludePreview ([bool] $IncludePreview) `
-            -AllVersions ([bool] $AllVersions)
+            -AllVersions ([bool] $AllVersions))
+        if ($releases.Count -eq 0) {
+            Write-Host 'No official Windows .NET runtime releases matched the requested filters.'
+            if ($PSCmdlet.ParameterSetName -eq 'Channel' -and -not $IncludePreview) {
+                Write-Host 'Use -IncludePreview to include preview and release-candidate releases.'
+            }
+            return
+        }
+        return $releases
     }
     finally {
         [Net.ServicePointManager]::SecurityProtocol = $originalSecurityProtocol

@@ -20,6 +20,7 @@ function Install-DotNetSdk {
 
     .PARAMETER Channel
     Installs the latest stable SDK in each specified major/minor channel.
+    A major version such as 11 is shorthand for 11.0.
 
     .PARAMETER VersionBand
     Installs the latest stable SDK in each specified feature band.
@@ -56,7 +57,7 @@ function Install-DotNetSdk {
     Installs the latest stable SDK in the 8.0.4xx feature band.
 
     .EXAMPLE
-    Install-DotNetSdk -Channel 11.0 -IncludePreview
+    Install-DotNetSdk -Channel 11 -IncludePreview
 
     Installs the latest available .NET 11 SDK, including prereleases.
     #>
@@ -109,6 +110,7 @@ function Install-DotNetSdk {
             $Version
         }
         'Channel' {
+            $Channel = @(ConvertTo-DotNetChannels -Channels $Channel)
             $findParameters.Channel = $Channel
             if ($IncludePreview) {
                 $findParameters.IncludePreview = $true
