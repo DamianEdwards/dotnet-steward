@@ -36,7 +36,11 @@ function Update-DotNetRuntime {
     candidate. This is not required for installed prerelease runtimes.
 
     .PARAMETER InteractiveInstaller
-    Shows the installer's UI instead of using /install /quiet /norestart.
+    Compatibility switch for -InstallerMode Interactive.
+
+    .PARAMETER InstallerMode
+    Selects Quiet (no UI), Passive (unattended progress UI, the default), or
+    Interactive (full installer UI). All modes suppress automatic restarts.
 
     .PARAMETER Elevate
     Runs selected installers in one elevated PowerShell worker. Defaults to
@@ -92,9 +96,13 @@ function Update-DotNetRuntime {
 
         [switch] $InteractiveInstaller,
 
+        [ValidateSet('Quiet', 'Passive', 'Interactive')]
+        [string] $InstallerMode = 'Passive',
+
         [switch] $Elevate
     )
 
+    $InstallerMode = Resolve-DotNetInstallerMode -BoundParameters $PSBoundParameters
     $originalSecurityProtocol = [Net.ServicePointManager]::SecurityProtocol
     try {
         [Net.ServicePointManager]::SecurityProtocol =
@@ -187,7 +195,7 @@ function Update-DotNetRuntime {
         }
 
         Invoke-DotNetInstallerPlan @elevationParameters -Candidates $candidates `
-            -ShowInstallerUi ([bool] $InteractiveInstaller)
+            -InstallerMode $InstallerMode
     }
     finally {
         [Net.ServicePointManager]::SecurityProtocol = $originalSecurityProtocol

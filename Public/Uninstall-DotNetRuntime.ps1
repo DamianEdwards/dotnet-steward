@@ -26,6 +26,10 @@ function Uninstall-DotNetRuntime {
     .PARAMETER Force
     Skips the explicit uninstall confirmation (but not -Confirm).
 
+    .PARAMETER InstallerMode
+    Selects Quiet (no UI), Passive (unattended progress UI, the default), or
+    Interactive (full installer UI). All modes suppress automatic restarts.
+
     .PARAMETER Elevate
     Runs selected uninstalls in one elevated PowerShell worker. Defaults to
     enabled for multiple uninstalls and disabled for a single uninstall.
@@ -61,6 +65,9 @@ function Uninstall-DotNetRuntime {
 
         [switch] $Force,
 
+        [ValidateSet('Quiet', 'Passive', 'Interactive')]
+        [string] $InstallerMode = 'Passive',
+
         [switch] $Elevate
     )
 
@@ -89,5 +96,6 @@ function Uninstall-DotNetRuntime {
         $elevationParameters.Elevate = [bool] $Elevate
     }
     Invoke-DotNetUninstallSelection @elevationParameters -Installations $installations `
-        -ParameterSetName $PSCmdlet.ParameterSetName -Force ([bool] $Force) -Cmdlet $PSCmdlet
+        -ParameterSetName $PSCmdlet.ParameterSetName -Force ([bool] $Force) -Cmdlet $PSCmdlet `
+        -InstallerMode $InstallerMode
 }

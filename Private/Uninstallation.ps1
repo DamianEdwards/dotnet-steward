@@ -43,6 +43,9 @@ function Invoke-DotNetUninstallPlan {
         [Parameter(Mandatory = $true)]
         [object[]] $Installations,
 
+        [ValidateSet('Quiet', 'Passive', 'Interactive')]
+        [string] $InstallerMode = 'Passive',
+
         [Nullable[bool]] $Elevate
     )
 
@@ -50,7 +53,8 @@ function Invoke-DotNetUninstallPlan {
     $elevationPlan = Get-DotNetElevationPlan -OperationCount $Installations.Count -Elevate $Elevate
     $isAdministrator = $elevationPlan.IsAdministrator
     if ($elevationPlan.UseWorker) {
-        $restartRequired = Invoke-DotNetElevatedOperation -Action Uninstall -Items $Installations
+        $restartRequired = Invoke-DotNetElevatedOperation -Action Uninstall -Items $Installations `
+            -InstallerMode $InstallerMode
         Write-Host 'Selected .NET installations were uninstalled successfully.'
         if ($restartRequired) {
             Write-Host 'Restart Windows to complete the selected .NET uninstalls.'
@@ -69,8 +73,9 @@ function Invoke-DotNetUninstallPlan {
         }
 
         try {
+            $arguments = @(Get-DotNetInstallerArguments -Action Uninstall -InstallerMode $InstallerMode)
             $process = Start-Process -FilePath $path `
-                -ArgumentList @('/uninstall', '/quiet', '/norestart') -Verb RunAs -Wait -PassThru
+                -ArgumentList $arguments -Verb RunAs -Wait -PassThru
         }
         catch {
             $nativeErrorCodeProperty = $_.Exception.PSObject.Properties['NativeErrorCode']
@@ -138,6 +143,9 @@ function Invoke-DotNetUninstallSelection {
         [Parameter(Mandatory = $true)]
         [System.Management.Automation.PSCmdlet] $Cmdlet,
 
+        [ValidateSet('Quiet', 'Passive', 'Interactive')]
+        [string] $InstallerMode = 'Passive',
+
         [Nullable[bool]] $Elevate
     )
 
@@ -179,5 +187,6 @@ function Invoke-DotNetUninstallSelection {
         }
     }
 
-    [void] (Invoke-DotNetUninstallPlan -Installations $Installations -Elevate $Elevate)
+    [void] (Invoke-DotNetUninstallPlan -Installations $Installations `
+        -InstallerMode $InstallerMode -Elevate $Elevate)
 }

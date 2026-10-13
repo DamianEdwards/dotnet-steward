@@ -267,7 +267,7 @@ $releaseDiscoveryChecks = & $module {
 
     $script:ChannelPlans = @()
     function Invoke-DotNetInstallerPlan {
-        param($Candidates, $ShowInstallerUi, $CompletionSubject, $Elevate)
+        param($Candidates, $InstallerMode, $CompletionSubject, $Elevate)
         $script:ChannelPlans += ,@($Candidates)
     }
     Install-DotNetSdk -Channel 8, 11 -Architecture x64 -IncludePreview
@@ -1077,7 +1077,7 @@ $uninstallCheck = & $module {
     $executed = $script:Started.Count -eq 1 -and
         $script:Started[0].FilePath -eq $sdk.BundleCachePath -and
         $script:Started[0].Verb -eq 'RunAs' -and
-        ($script:Started[0].Arguments -join ' ') -eq '/uninstall /quiet /norestart'
+        ($script:Started[0].Arguments -join ' ') -eq '/uninstall /passive /norestart'
 
     $script:ExitCode = 1603
     $failed = $false
@@ -1161,9 +1161,9 @@ $elevationChecks = & $module {
         return [pscustomobject] @{ ExitCode = $script:ExitCode }
     }
     function Invoke-DotNetElevatedOperation {
-        param($Action, $Items, $ShowInstallerUi)
+        param($Action, $Items, $InstallerMode)
         $script:Elevated += [pscustomobject] @{
-            Action = $Action; Items = @($Items); ShowInstallerUi = $ShowInstallerUi
+            Action = $Action; Items = @($Items); InstallerMode = $InstallerMode
         }
         return $true
     }
@@ -1198,19 +1198,19 @@ $elevationChecks = & $module {
         }
     )
 
-    [void] (Install-DotNetCandidates -Candidates @($items[0]) -ShowInstallerUi $false)
+    [void] (Install-DotNetCandidates -Candidates @($items[0]) -InstallerMode Quiet)
     $singleDirect = $script:Started.Count -eq 1 -and $script:Elevated.Count -eq 0
-    $restart = Install-DotNetCandidates -Candidates $items -ShowInstallerUi $true
+    $restart = Install-DotNetCandidates -Candidates $items -InstallerMode Interactive
     $batchElevated = $restart -and $script:Elevated.Count -eq 1 -and
-        $script:Started.Count -eq 1 -and $script:Elevated[0].ShowInstallerUi -and
+        $script:Started.Count -eq 1 -and ($script:Elevated[0].InstallerMode -eq 'Interactive') -and
         $script:Elevated[0].Items[0].TargetVersion -eq '8.0.31'
-    [void] (Install-DotNetCandidates -Candidates $items -ShowInstallerUi $false -Elevate:$false)
+    [void] (Install-DotNetCandidates -Candidates $items -InstallerMode Quiet -Elevate:$false)
     $batchOptOut = $script:Started.Count -eq 3 -and $script:Elevated.Count -eq 1 -and
         ($script:Started[1].Arguments -join ' ') -eq '/install /quiet /norestart'
-    [void] (Install-DotNetCandidates -Candidates @($items[0]) -ShowInstallerUi $false -Elevate:$true)
+    [void] (Install-DotNetCandidates -Candidates @($items[0]) -InstallerMode Quiet -Elevate:$true)
     $singleOptIn = $script:Elevated.Count -eq 2
     $script:Administrator = $true
-    [void] (Install-DotNetCandidates -Candidates $items -ShowInstallerUi $true -Elevate:$true)
+    [void] (Install-DotNetCandidates -Candidates $items -InstallerMode Interactive -Elevate:$true)
     $alreadyElevated = $script:Elevated.Count -eq 2 -and $script:Started.Count -eq 5 -and
         ($script:Started[3].Arguments -join ' ') -eq '/install /norestart'
     $script:Administrator = $false
@@ -1227,7 +1227,7 @@ $elevationChecks = & $module {
     $script:ExitCode = 1603
     $stopOnFailure = $false
     try {
-        [void] (Install-DotNetCandidates -Candidates $items -ShowInstallerUi $false)
+        [void] (Install-DotNetCandidates -Candidates $items -InstallerMode Quiet)
     }
     catch {
         $stopOnFailure = $_.Exception.Message -match 'exited with code 1603' -and
@@ -1242,7 +1242,7 @@ $elevationChecks = & $module {
         $planPath = Join-Path $directory 'plan.clixml'
         $resultPath = Join-Path $directory 'result.clixml'
         [pscustomobject] @{
-            Action = 'Install'; Items = $items; ShowInstallerUi = $true
+            Action = 'Install'; Items = $items; InstallerMode = 'Interactive'
         } | Export-Clixml -LiteralPath $planPath
         $script:ExitCode = 3010
         $code = Invoke-DotNetElevationWorker -PlanPath $planPath -ResultPath $resultPath
@@ -1261,7 +1261,7 @@ $elevationChecks = & $module {
             $items
         }
         [pscustomobject] @{
-            Action = 'Uninstall'; Items = $items
+            Action = 'Uninstall'; Items = $items; InstallerMode = 'Passive'
         } | Export-Clixml -LiteralPath $planPath
         $code = Invoke-DotNetElevationWorker -PlanPath $planPath -ResultPath $resultPath
         $result = Import-Clixml -LiteralPath $resultPath
@@ -1308,7 +1308,7 @@ $elevationChecks = & $module {
             $Wait -and $PassThru -and $FilePath -eq (Join-Path $PSHOME $expectedExecutable) -and
             $ArgumentList[0] -eq '-NoLogo' -and $ArgumentList[1] -eq '-NoProfile' -and
             $ArgumentList[3] -eq [string] (Get-ExecutionPolicy) -and
-            $plan.Items.Count -eq 2 -and $plan.ShowInstallerUi -and $plan.Action -eq 'Install'
+            $plan.Items.Count -eq 2 -and ($plan.InstallerMode -eq 'Interactive') -and $plan.Action -eq 'Install'
         if ($script:WorkerMode -eq 'Cancel') {
             throw (New-Object ComponentModel.Win32Exception(1223))
         }
@@ -1323,7 +1323,7 @@ $elevationChecks = & $module {
             ExitCode = if ($script:WorkerMode -eq 'Success') { 0 } else { 1 }
         }
     }
-    $restart = Invoke-DotNetElevatedOperation -Action Install -Items $items -ShowInstallerUi $true
+    $restart = Invoke-DotNetElevatedOperation -Action Install -Items $items -InstallerMode Interactive
     $handoffValid = $restart -and $script:CommandValid -and
         -not (Test-Path -LiteralPath $script:WorkerDirectory)
     $failureChecks = @()
@@ -1331,7 +1331,7 @@ $elevationChecks = & $module {
         $script:WorkerMode = $mode
         $failed = $false
         try {
-            [void] (Invoke-DotNetElevatedOperation -Action Install -Items $items -ShowInstallerUi $true)
+            [void] (Invoke-DotNetElevatedOperation -Action Install -Items $items -InstallerMode Interactive)
         }
         catch {
             $pattern = switch ($mode) {
@@ -1390,21 +1390,22 @@ $elevationForwardingChecks = & $module {
     function Confirm-SelectedUpdates { return $true }
     function Read-Host { $script:Prompts++; return 'yes' }
     function Invoke-DotNetInstallerPlan {
-        param($Candidates, $ShowInstallerUi, $CompletionSubject, [Nullable[bool]] $Elevate)
+        param($Candidates, $InstallerMode, $CompletionSubject, [Nullable[bool]] $Elevate)
         $script:Plans += [pscustomobject] @{
-            Elevate = $Elevate; Count = @($Candidates).Count
+            Elevate = $Elevate; Count = @($Candidates).Count; InstallerMode = $InstallerMode
         }
     }
     function Invoke-DotNetUninstallPlan {
-        param($Installations, [Nullable[bool]] $Elevate)
+        param($Installations, [Nullable[bool]] $Elevate, $InstallerMode)
         $script:Plans += [pscustomobject] @{
-            Elevate = $Elevate; Count = @($Installations).Count
+            Elevate = $Elevate; Count = @($Installations).Count; InstallerMode = $InstallerMode
         }
         return $false
     }
     $forwardingValid = $true
     $whatIfSafe = $true
     $previewValid = $true
+    $modeForwardingValid = $true
     foreach ($name in @('Install-DotNetSdk', 'Install-DotNetRuntime',
         'Update-DotNetSdk', 'Update-DotNetRuntime',
         'Uninstall-DotNetSdk', 'Uninstall-DotNetRuntime')) {
@@ -1416,6 +1417,36 @@ $elevationForwardingChecks = & $module {
             if ($name -like '*Runtime') { $parameters.Architecture = 'x64' }
         }
         else { $parameters.UninstallAll = $true; $parameters.Force = $true }
+        & $name @parameters
+        $modeForwardingValid = $modeForwardingValid -and $script:Plans[-1].InstallerMode -eq 'Passive'
+        foreach ($installerMode in @('Quiet', 'Passive', 'Interactive')) {
+            & $name @parameters -InstallerMode $installerMode
+            $modeForwardingValid = $modeForwardingValid -and
+                $script:Plans[-1].InstallerMode -eq $installerMode
+        }
+        if ($name -notlike 'Uninstall-*') {
+            & $name @parameters -InteractiveInstaller
+            $modeForwardingValid = $modeForwardingValid -and $script:Plans[-1].InstallerMode -eq 'Interactive'
+            & $name @parameters -InteractiveInstaller:$false
+            $modeForwardingValid = $modeForwardingValid -and $script:Plans[-1].InstallerMode -eq 'Passive'
+            & $name @parameters -InteractiveInstaller -InstallerMode Interactive
+            $modeForwardingValid = $modeForwardingValid -and $script:Plans[-1].InstallerMode -eq 'Interactive'
+            & $name @parameters -InteractiveInstaller:$false -InstallerMode Quiet
+            $modeForwardingValid = $modeForwardingValid -and $script:Plans[-1].InstallerMode -eq 'Quiet'
+            foreach ($conflictingMode in @('Quiet', 'Passive')) {
+                $before = $script:Plans.Count
+                $refused = $false
+                try { & $name @parameters -InteractiveInstaller -InstallerMode $conflictingMode -WhatIf }
+                catch { $refused = $_.Exception.Message -like '*cannot be combined*' }
+                $modeForwardingValid = $modeForwardingValid -and $refused -and
+                    $script:Plans.Count -eq $before
+            }
+        }
+        $before = $script:Plans.Count
+        $refused = $false
+        try { & $name @parameters -InstallerMode Invalid }
+        catch { $refused = $true }
+        $modeForwardingValid = $modeForwardingValid -and $refused -and $script:Plans.Count -eq $before
         foreach ($mode in @('Default', 'Enabled', 'Disabled')) {
             $parameters.Remove('Elevate')
             if ($mode -ne 'Default') { $parameters.Elevate = $mode -eq 'Enabled' }
@@ -1482,6 +1513,7 @@ $elevationForwardingChecks = & $module {
         ForwardingValid = $forwardingValid
         WhatIfSafe = $whatIfSafe
         PreviewValid = $previewValid
+        ModeForwardingValid = $modeForwardingValid
         EmptyPreviewSafe = $emptyPreviewSafe
         InteractiveCount = $interactiveCount
         DeclinedSafe = $declinedSafe
@@ -1552,7 +1584,7 @@ $elevationCleanupCheck = & $module {
         return [pscustomobject] @{ SignerSubject = '.NET' }
     }
     function Invoke-DotNetElevatedOperation {
-        param($Action, $Items, $ShowInstallerUi)
+        param($Action, $Items, $InstallerMode)
         $script:WorkerCalls++
         if ($script:Mode -eq 'ElevationFailure') { throw 'Synthetic elevation cancellation.' }
         return $true
@@ -1567,7 +1599,7 @@ $elevationCleanupCheck = & $module {
         $before = $script:WorkerCalls
         $expectedOutcome = $false
         try {
-            Invoke-DotNetInstallerPlan -Candidates @($candidate, $candidate) -ShowInstallerUi $false
+            Invoke-DotNetInstallerPlan -Candidates @($candidate, $candidate) -InstallerMode Quiet
             $expectedOutcome = $mode -eq 'Success'
         }
         catch {
@@ -1587,5 +1619,74 @@ $elevationCleanupCheck = & $module {
     return -not ($checks -contains $false)
 }
 Assert-Condition $elevationCleanupCheck 'Batch trust gating or download cleanup failed.'
+
+Write-Host 'Checking installer modes in direct and elevated execution...'
+$installerModeChecks = & $module {
+    function Test-DotNetAdministrator { return $true }
+    $script:Arguments = @()
+    function Start-Process {
+        param($FilePath, $ArgumentList, $Verb, [switch] $Wait, [switch] $PassThru)
+        $script:Arguments += ,@($ArgumentList)
+        return [pscustomobject] @{ ExitCode = 0 }
+    }
+    function Assert-InstallerTrust { param($Candidate) }
+    function Assert-InstallerSignature { param($InstallerPath, $ProductLabel, $Version) }
+    function Get-DotNetUninstallExecutable { param($Installation) return $Installation.BundleCachePath }
+    $item = [pscustomobject] @{
+        ProductType = 'Runtime'; ProductLabel = '.NET Runtime'
+        Version = '8.0.31'; TargetVersion = '8.0.31'
+        TargetVersionInfo = New-SdkVersionInfo -Text '8.0.31'
+        Architecture = 'x64'; Rid = 'win-x64'; InstallerKind = 'Bundle'
+        IsUninstallable = $true; DisplayName = '.NET Runtime 8.0.31'
+        InstallerPath = 'C:\fake\runtime.exe'; BundleCachePath = 'C:\fake\runtime.exe'
+        RegistryView = 'Registry32'; RegistrySubkey = 'fake'; BundleId = 'fake'
+    }
+    function Get-DotNetInstallationInventory { return $item }
+    $directory = Join-Path ([IO.Path]::GetTempPath()) ('dotnet-steward-mode-test-' + [guid]::NewGuid().ToString('N'))
+    [void] (New-Item -Path $directory -ItemType Directory)
+    $valid = $true
+    try {
+        $planPath = Join-Path $directory 'plan.clixml'
+        $resultPath = Join-Path $directory 'result.clixml'
+        foreach ($action in @('Install', 'Uninstall')) {
+            foreach ($mode in @('Quiet', 'Passive', 'Interactive')) {
+                $expected = "/$($action.ToLowerInvariant())"
+                if ($mode -ne 'Interactive') { $expected += " /$($mode.ToLowerInvariant())" }
+                $expected += ' /norestart'
+                if ($action -eq 'Install') {
+                    [void] (Install-DotNetCandidates -Candidates @($item) -InstallerMode $mode)
+                }
+                else {
+                    [void] (Invoke-DotNetUninstallPlan -Installations @($item) -InstallerMode $mode)
+                }
+                $valid = $valid -and ($script:Arguments[-1] -join ' ') -eq $expected
+                [pscustomobject] @{
+                    Action = $action; Items = @($item); InstallerMode = $mode
+                } | Export-Clixml -LiteralPath $planPath
+                $code = Invoke-DotNetElevationWorker -PlanPath $planPath -ResultPath $resultPath
+                $result = Import-Clixml -LiteralPath $resultPath
+                $valid = $valid -and $code -eq 0 -and $result.Succeeded -and
+                    ($script:Arguments[-1] -join ' ') -eq $expected
+            }
+        }
+        [void] (Install-DotNetCandidates -Candidates @($item))
+        $valid = $valid -and ($script:Arguments[-1] -join ' ') -eq '/install /passive /norestart'
+        [void] (Invoke-DotNetUninstallPlan -Installations @($item))
+        $valid = $valid -and ($script:Arguments[-1] -join ' ') -eq '/uninstall /passive /norestart'
+        [pscustomobject] @{
+            Action = 'Install'; Items = @($item); InstallerMode = 'Invalid'
+        } | Export-Clixml -LiteralPath $planPath
+        $before = $script:Arguments.Count
+        $code = Invoke-DotNetElevationWorker -PlanPath $planPath -ResultPath $resultPath 2>$null
+        $result = Import-Clixml -LiteralPath $resultPath
+        $valid = $valid -and $code -eq 1 -and -not $result.Succeeded -and
+            $script:Arguments.Count -eq $before
+    }
+    finally {
+        Remove-Item -LiteralPath $directory -Recurse -Force
+    }
+    return $valid
+}
+Assert-Condition $installerModeChecks 'Installer modes were not preserved or validated during execution.'
 
 Write-Host 'DotNetSteward verification passed.'

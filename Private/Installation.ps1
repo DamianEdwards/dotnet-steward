@@ -1,3 +1,38 @@
+function Resolve-DotNetInstallerMode {
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Collections.IDictionary] $BoundParameters
+    )
+
+    if ($BoundParameters.Keys -contains 'InteractiveInstaller' -and $BoundParameters.InteractiveInstaller) {
+        if ($BoundParameters.Keys -contains 'InstallerMode' -and $BoundParameters.InstallerMode -ne 'Interactive') {
+            throw '-InteractiveInstaller cannot be combined with a non-Interactive -InstallerMode.'
+        }
+        return 'Interactive'
+    }
+    if ($BoundParameters.Keys -contains 'InstallerMode') {
+        return [string] $BoundParameters.InstallerMode
+    }
+    return 'Passive'
+}
+
+function Get-DotNetInstallerArguments {
+    param(
+        [ValidateSet('Install', 'Uninstall')]
+        [string] $Action,
+
+        [ValidateSet('Quiet', 'Passive', 'Interactive')]
+        [string] $InstallerMode = 'Passive'
+    )
+
+    "/$($Action.ToLowerInvariant())"
+    switch ($InstallerMode) {
+        'Quiet' { '/quiet' }
+        'Passive' { '/passive' }
+    }
+    '/norestart'
+}
+
 function Test-DotNetAdministrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     try {
@@ -75,7 +110,7 @@ function Invoke-DotNetElevationWorker {
                     [void] (Assert-InstallerTrust -Candidate $candidate)
                 }
                 $result.RestartRequired = Install-DotNetCandidates -Candidates $candidates `
-                    -ShowInstallerUi $plan.ShowInstallerUi -Elevate:$false
+                    -InstallerMode $plan.InstallerMode -Elevate:$false
             }
             'Uninstall' {
                 $inventory = @(Get-DotNetInstallationInventory)
@@ -96,7 +131,7 @@ function Invoke-DotNetElevationWorker {
                     $installations += $matches[0]
                 }
                 $result.RestartRequired = Invoke-DotNetUninstallPlan `
-                    -Installations $installations -Elevate:$false
+                    -Installations $installations -InstallerMode $plan.InstallerMode -Elevate:$false
             }
             default {
                 throw "Unsupported elevated operation '$($plan.Action)'."
@@ -122,7 +157,8 @@ function Invoke-DotNetElevatedOperation {
         [Parameter(Mandatory = $true)]
         [object[]] $Items,
 
-        [bool] $ShowInstallerUi = $false
+        [ValidateSet('Quiet', 'Passive', 'Interactive')]
+        [string] $InstallerMode = 'Passive'
     )
 
     $directory = Join-Path ([IO.Path]::GetTempPath()) (
@@ -135,7 +171,7 @@ function Invoke-DotNetElevatedOperation {
         [pscustomobject] @{
             Action = $Action
             Items = $Items
-            ShowInstallerUi = $ShowInstallerUi
+            InstallerMode = $InstallerMode
         } | Export-Clixml -LiteralPath $planPath
 
         $modulePath = $ExecutionContext.SessionState.Module.Path
@@ -193,8 +229,8 @@ function Install-DotNetCandidates {
         [Parameter(Mandatory = $true)]
         [object[]] $Candidates,
 
-        [Parameter(Mandatory = $true)]
-        [bool] $ShowInstallerUi,
+        [ValidateSet('Quiet', 'Passive', 'Interactive')]
+        [string] $InstallerMode = 'Passive',
 
         [Nullable[bool]] $Elevate
     )
@@ -206,7 +242,7 @@ function Install-DotNetCandidates {
     $isAdministrator = $elevationPlan.IsAdministrator
     if ($elevationPlan.UseWorker) {
         return Invoke-DotNetElevatedOperation -Action Install -Items $orderedCandidates `
-            -ShowInstallerUi $ShowInstallerUi
+            -InstallerMode $InstallerMode
     }
 
     foreach ($candidate in $orderedCandidates) {
@@ -216,12 +252,7 @@ function Install-DotNetCandidates {
             Write-Host '  Windows will request administrator approval for this machine-wide install.'
         }
 
-        if ($ShowInstallerUi) {
-            $arguments = @('/install', '/norestart')
-        }
-        else {
-            $arguments = @('/install', '/quiet', '/norestart')
-        }
+        $arguments = @(Get-DotNetInstallerArguments -Action Install -InstallerMode $InstallerMode)
 
         try {
             $process = Start-Process -FilePath $candidate.InstallerPath `
@@ -255,8 +286,8 @@ function Invoke-DotNetInstallerPlan {
         [Parameter(Mandatory = $true)]
         [object[]] $Candidates,
 
-        [Parameter(Mandatory = $true)]
-        [bool] $ShowInstallerUi,
+        [ValidateSet('Quiet', 'Passive', 'Interactive')]
+        [string] $InstallerMode = 'Passive',
 
         [ValidateSet('updates', 'installations')]
         [string] $CompletionSubject = 'updates',
@@ -279,7 +310,7 @@ function Invoke-DotNetInstallerPlan {
         }
 
         $restartRequired = Install-DotNetCandidates -Candidates $Candidates `
-            -ShowInstallerUi $ShowInstallerUi -Elevate $Elevate
+            -InstallerMode $InstallerMode -Elevate $Elevate
 
         Write-Host ''
         if ($restartRequired) {

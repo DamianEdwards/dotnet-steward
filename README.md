@@ -257,8 +257,8 @@ Interactive checklists start with nothing selected. `-VersionBand` and
 `-Force` skips that confirmation. `-WhatIf` previews the selected installations
 without prompting or uninstalling. `-Confirm` uses PowerShell's additional
 ShouldProcess confirmation. Uninstallation runs the locally cached, signed
-Microsoft bundle with `/uninstall /quiet /norestart` and may request UAC
-approval. If the cached installer is missing, the command fails without
+Microsoft bundle with `/uninstall /passive /norestart` by default and may
+request UAC approval. If the cached installer is missing, the command fails without
 attempting that uninstall. Shared MSI payloads and Visual Studio-managed
 installations are not eligible. No internet connection is required to uninstall.
 
@@ -280,7 +280,23 @@ DotNetSteward:
 6. Uses unattended installer arguments by default while allowing Windows to
    request UAC elevation.
 
-Use `-InteractiveInstaller` to display each installer's UI.
+Install, update, and uninstall commands default to `-InstallerMode Passive`,
+which shows installer progress UI but proceeds without installation-choice
+prompts. Use `-InstallerMode Quiet` for no installer UI, or
+`-InstallerMode Interactive` for full installer UI. All modes use `/norestart`;
+UAC, selection, and uninstall confirmation prompts are independent of the
+installer mode.
+
+```powershell
+Install-DotNetSdk -Channel 8, 10 -InstallerMode Passive
+Update-DotNetRuntime -UpdateAll -InstallerMode Quiet
+Uninstall-DotNetSdk -UninstallAll -InstallerMode Interactive
+```
+
+The existing `-InteractiveInstaller` switch on install and update commands
+remains supported as shorthand for `-InstallerMode Interactive`. Combining it
+with an explicit Quiet or Passive mode is an error. `-InteractiveInstaller:$false`
+uses the default Passive mode unless `-InstallerMode` is specified.
 
 ## Repository layout
 

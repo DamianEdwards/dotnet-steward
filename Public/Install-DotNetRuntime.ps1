@@ -34,7 +34,11 @@ function Install-DotNetRuntime {
     it is newer than the latest stable release.
 
     .PARAMETER InteractiveInstaller
-    Shows the installer's UI instead of using /install /quiet /norestart.
+    Compatibility switch for -InstallerMode Interactive.
+
+    .PARAMETER InstallerMode
+    Selects Quiet (no UI), Passive (unattended progress UI, the default), or
+    Interactive (full installer UI). All modes suppress automatic restarts.
 
     .PARAMETER Elevate
     Runs selected installers in one elevated PowerShell worker. Defaults to
@@ -87,9 +91,13 @@ function Install-DotNetRuntime {
 
         [switch] $InteractiveInstaller,
 
+        [ValidateSet('Quiet', 'Passive', 'Interactive')]
+        [string] $InstallerMode = 'Passive',
+
         [switch] $Elevate
     )
 
+    $InstallerMode = Resolve-DotNetInstallerMode -BoundParameters $PSBoundParameters
     Assert-DotNetStewardPlatform
     if (-not $PSBoundParameters.ContainsKey('Architecture')) {
         $Architecture = @(Get-NativeDotNetArchitecture)
@@ -139,6 +147,6 @@ function Install-DotNetRuntime {
     }
 
     Invoke-DotNetInstallerPlan @elevationParameters -Candidates $candidates `
-        -ShowInstallerUi ([bool] $InteractiveInstaller) `
+        -InstallerMode $InstallerMode `
         -CompletionSubject installations
 }

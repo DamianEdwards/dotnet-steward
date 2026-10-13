@@ -23,7 +23,7 @@ function Update-DotNetSdk {
 
     Supplying VersionBand or UpdateAll disables selection and confirmation
     prompts. Installers still request UAC elevation when the shell is not already
-    elevated. Installer UI is disabled by default.
+    elevated. Unattended installer progress UI is shown by default.
 
     .PARAMETER UpdateScope
     Limits updates to Patch, FeatureBand, or Major. The default is FeatureBand.
@@ -42,8 +42,11 @@ function Update-DotNetSdk {
     prerelease.
 
     .PARAMETER InteractiveInstaller
-    Shows the installer's full UI. Without this switch, installers run with
-    /install /quiet /norestart.
+    Compatibility switch for -InstallerMode Interactive.
+
+    .PARAMETER InstallerMode
+    Selects Quiet (no UI), Passive (unattended progress UI, the default), or
+    Interactive (full installer UI). All modes suppress automatic restarts.
 
     .PARAMETER Elevate
     Runs selected installers in one elevated PowerShell worker. Defaults to
@@ -99,9 +102,13 @@ function Update-DotNetSdk {
 
         [switch] $InteractiveInstaller,
 
+        [ValidateSet('Quiet', 'Passive', 'Interactive')]
+        [string] $InstallerMode = 'Passive',
+
         [switch] $Elevate
     )
 
+    $InstallerMode = Resolve-DotNetInstallerMode -BoundParameters $PSBoundParameters
     $originalSecurityProtocol = [Net.ServicePointManager]::SecurityProtocol
     try {
         [Net.ServicePointManager]::SecurityProtocol =
@@ -188,7 +195,7 @@ function Update-DotNetSdk {
     }
 
     Invoke-DotNetInstallerPlan @elevationParameters -Candidates $candidates `
-        -ShowInstallerUi ([bool] $InteractiveInstaller)
+        -InstallerMode $InstallerMode
     }
     finally {
         [Net.ServicePointManager]::SecurityProtocol = $originalSecurityProtocol
