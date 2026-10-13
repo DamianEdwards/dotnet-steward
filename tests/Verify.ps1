@@ -778,12 +778,16 @@ $supportChecks = & $module {
 
     [pscustomobject] @{ Example = $currentSdk }
 }
+$checkMark = [string] [char] 0x2713
+$warningTriangle = [string] [char] 0x26A0
+$cross = [string] [char] 0x2717
+$upToDatePattern = [regex]::Escape("$checkMark Up to date.")
 $formattedInstallation = $supportChecks.Example | Format-Table | Out-String -Width 240
 $expectedDaysToEol = [int] [math]::Ceiling(
     ($supportChecks.Example.EndOfSupportDate - [datetime]::Now).TotalDays
 )
 Assert-Condition ($formattedInstallation -match 'EOL date\s+Days to EOL\s+Status' -and
-    $formattedInstallation -match "2999-11-14\s+$expectedDaysToEol\s+Up to date\.") `
+    $formattedInstallation -match "2999-11-14\s+$expectedDaysToEol\s+$upToDatePattern") `
     'The default installation view does not display the EOL date and day count before support status.'
 foreach ($dayCountCase in @(
     @{ Date = [datetime]::Now.AddDays(2.25); Expected = 3 }
@@ -794,14 +798,114 @@ foreach ($dayCountCase in @(
     $datedInstallation.EndOfSupportDate = $dayCountCase.Date
     $formattedDatedInstallation = $datedInstallation | Format-Table | Out-String -Width 240
     Assert-Condition (
-        $formattedDatedInstallation -match "\d{4}-\d{2}-\d{2}\s+$($dayCountCase.Expected)\s+Up to date\."
+        $formattedDatedInstallation -match "\d{4}-\d{2}-\d{2}\s+$($dayCountCase.Expected)\s+$upToDatePattern"
     ) "The EOL day count was not rounded up to $($dayCountCase.Expected)."
 }
 $undatedInstallation = $supportChecks.Example.PSObject.Copy()
 $undatedInstallation.EndOfSupportDate = $null
 $formattedUndatedInstallation = $undatedInstallation | Format-Table | Out-String -Width 240
-Assert-Condition ($formattedUndatedInstallation -match 'False\s+Up to date\.') `
+Assert-Condition ($formattedUndatedInstallation -match "False\s+$upToDatePattern") `
     'The default installation view does not leave an unavailable EOL date and day count blank.'
+
+Write-Host 'Checking installation status icons, colors, and uncolored output...'
+$statusFormattingCases = @(
+    @{ Status = 'Up to date.'; Color = 'Green'; Icon = $checkMark }
+    @{ Status = 'Patch 10.0.402 is available.'; Color = 'Yellow'; Icon = $warningTriangle }
+    @{ Status = '.NET 8.0 is going out of support soon.'; Color = 'Yellow'; Icon = $warningTriangle }
+    @{ Status = '.NET 7.0 is out of support.'; Color = 'Red'; Icon = $cross }
+    @{ Status = 'Unknown'; Color = $null; Icon = $null }
+    @{ Status = 'Not checked'; Color = $null; Icon = $null }
+)
+$style = if ($PSVersionTable.PSVersion -ge [version] '7.2') { $PSStyle } else { $null }
+$originalOutputRendering = if ($null -ne $style) { $style.OutputRendering } else { $null }
+$escape = [string] [char] 27
+try {
+    foreach ($rendering in @('ANSI', 'Host', 'PlainText')) {
+        if ($null -ne $style) {
+            $style.OutputRendering = $rendering
+        }
+        foreach ($case in $statusFormattingCases) {
+            $item = $supportChecks.Example.PSObject.Copy()
+            $item.SupportStatus = $case.Status
+            $displayStatus = if ($null -ne $case.Icon) {
+                "$($case.Icon) $($case.Status)"
+            }
+            else {
+                $case.Status
+            }
+            $formatted = $item | Format-Table | Out-String -Width 240
+            $expectColor = $null -ne $style -and $Host.UI.SupportsVirtualTerminal -and
+                $rendering -eq 'ANSI' -and $null -ne $case.Color
+            if ($expectColor) {
+                $expected = "$($style.Foreground.($case.Color))$displayStatus$($style.Reset)"
+                Assert-Condition ($formatted.Contains($expected)) `
+                    "The '$($case.Status)' icon and text did not use $($case.Color) with a trailing reset."
+            }
+            else {
+                # ANSI mode may still decorate table headers; only inspect the data row.
+                $row = @($formatted -split '\r?\n' | Where-Object {
+                    $_.Contains($case.Status)
+                })
+                Assert-Condition ($row.Count -eq 1 -and $row[0].Contains($displayStatus) -and
+                    -not $row[0].Contains($escape)) `
+                    "The '$($case.Status)' status did not use the expected uncolored prefix in $rendering output."
+            }
+            if ($null -eq $case.Icon) {
+                Assert-Condition (-not $formatted.Contains($checkMark) -and
+                    -not $formatted.Contains($warningTriangle) -and
+                    -not $formatted.Contains($cross)) `
+                    "The '$($case.Status)' status should not have an icon."
+            }
+            if ($rendering -ne 'ANSI') {
+                Assert-Condition (-not $formatted.Contains($escape)) `
+                    "The installation table contains ANSI escapes in $rendering output."
+            }
+            $serialized = $item | Select-Object SupportStatus | ConvertTo-Json -Compress
+            Assert-Condition ($item.SupportStatus -ceq $case.Status -and
+                $serialized -ceq ('{"SupportStatus":"' + $case.Status + '"}')) `
+                'Status formatting changed the structured property or its JSON representation.'
+        }
+    }
+}
+finally {
+    if ($null -ne $style) {
+        $style.OutputRendering = $originalOutputRendering
+    }
+}
+
+$formattingShell = [powershell]::Create()
+try {
+    [void] $formattingShell.AddScript({
+        param($ManifestPath, $Installation)
+        Set-StrictMode -Version Latest
+        $ErrorActionPreference = 'Stop'
+        Import-Module $ManifestPath -Force
+        if ($PSVersionTable.PSVersion -ge [version] '7.2') {
+            $PSStyle.OutputRendering = 'ANSI'
+        }
+        [pscustomobject] @{
+            SupportsVirtualTerminal = $Host.UI.SupportsVirtualTerminal
+            Table = $Installation | Format-Table | Out-String -Width 240
+        }
+    }.ToString()).AddArgument($manifestPath).AddArgument($supportChecks.Example)
+    $nonTerminalOutput = @($formattingShell.Invoke())
+    Assert-Condition (-not $formattingShell.HadErrors -and $nonTerminalOutput.Count -eq 1) `
+        "Non-terminal formatting failed: $($formattingShell.Streams.Error | Out-String)"
+    $nonTerminalRow = @($nonTerminalOutput[0].Table -split '\r?\n' | Where-Object {
+        $_.Contains('Up to date.')
+    })
+    Assert-Condition (-not $nonTerminalOutput[0].SupportsVirtualTerminal -and
+        $nonTerminalRow.Count -eq 1 -and
+        $nonTerminalRow[0].Contains("$checkMark Up to date.") -and
+        -not $nonTerminalRow[0].Contains($escape)) `
+        'A host without ANSI support did not preserve the uncolored status icon.'
+}
+finally {
+    if ($null -ne $style) {
+        $style.OutputRendering = $originalOutputRendering
+    }
+    $formattingShell.Dispose()
+}
 
 Write-Host 'Checking the installed-product inventory...'
 $installations = @(Get-DotNetInstallation -SkipSupportCheck:$SkipOnlineChecks)

@@ -15,6 +15,13 @@ function Get-DotNetInstallation {
     cannot be retrieved, returns the local inventory with Unknown status and a
     warning. Installer ownership and updateability are not changed.
 
+    The default table prefixes status values with a check mark for up to date,
+    a warning triangle for patch availability or approaching end of support,
+    and a cross for out of support. Unknown and Not checked have no icon.
+    ANSI-capable hosts on PowerShell 7.2 or later color the icons and status
+    text, respecting PSStyle output rendering. Other hosts and older PowerShell
+    editions use uncolored text. Returned properties never contain icons or colors.
+
     Prints an informational message when no registered installations are found
     or no installations match the requested filters. Returns no data objects
     in either case.

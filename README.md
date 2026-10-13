@@ -113,6 +113,19 @@ runtimes are compared within their major/minor channel. Preview versions use
 the same comparison rules; `Up to date.` does not imply a preview is supported
 for production.
 
+The default table prefixes **Status** values with a check mark for up to date,
+a warning triangle for either an available patch or approaching end of support,
+and a cross for out of support. On ANSI-capable hosts running PowerShell 7.2 or
+later, these icons and their status text are green, yellow, and red, respectively.
+`Unknown` and `Not checked` have no icon and retain the default terminal color.
+A green check mark indicates patch currency, not production support for previews.
+Coloring respects `$PSStyle.OutputRendering`: use
+`$PSStyle.OutputRendering = 'PlainText'` to disable it. With the default `Host`
+setting, formatted output sent to `Out-String` or redirected to a file is uncolored.
+Windows PowerShell 5.1, PowerShell 7.0/7.1, and hosts without ANSI support also
+use uncolored text. Icon prefixes remain when colors are disabled. Icons and
+colors are display-only and never added to object properties.
+
 Objects expose `SupportStatus`, `SupportPhase`, `Channel`, `EndOfSupportDate`,
 and `LatestPatchVersion` for scripting. `Channel` is the catalog channel, which
 can differ from an early SDK's major/minor version. `LatestPatchVersion` is
