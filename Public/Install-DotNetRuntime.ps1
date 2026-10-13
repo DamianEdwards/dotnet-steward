@@ -35,6 +35,11 @@ function Install-DotNetRuntime {
     .PARAMETER InteractiveInstaller
     Shows the installer's UI instead of using /install /quiet /norestart.
 
+    .PARAMETER Elevate
+    Runs selected installers in one elevated PowerShell worker. Defaults to
+    enabled for multiple installers and disabled for a single installer.
+    Use -Elevate:$false to retain per-installer elevation.
+
     .EXAMPLE
     Install-DotNetRuntime -Version 8.0.25
 
@@ -79,7 +84,9 @@ function Install-DotNetRuntime {
 
         [switch] $IncludePreview,
 
-        [switch] $InteractiveInstaller
+        [switch] $InteractiveInstaller,
+
+        [switch] $Elevate
     )
 
     Assert-DotNetStewardPlatform
@@ -115,14 +122,21 @@ function Install-DotNetRuntime {
     $targets = @($candidates | ForEach-Object {
         "$($_.ProductLabel) $($_.TargetVersion) ($($_.Rid))"
     })
+    $elevationParameters = @{}
+    if ($PSBoundParameters.ContainsKey('Elevate')) {
+        $elevationParameters.Elevate = [bool] $Elevate
+    }
     if (-not $PSCmdlet.ShouldProcess(
         ($targets -join ', '),
         'Download and install official runtime'
     )) {
+        if ($WhatIfPreference) {
+            Show-DotNetElevationPreview @elevationParameters -OperationCount $candidates.Count
+        }
         return
     }
 
-    Invoke-DotNetInstallerPlan -Candidates $candidates `
+    Invoke-DotNetInstallerPlan @elevationParameters -Candidates $candidates `
         -ShowInstallerUi ([bool] $InteractiveInstaller) `
         -CompletionSubject installations
 }

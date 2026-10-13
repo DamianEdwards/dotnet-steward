@@ -45,6 +45,11 @@ function Update-DotNetSdk {
     Shows the installer's full UI. Without this switch, installers run with
     /install /quiet /norestart.
 
+    .PARAMETER Elevate
+    Runs selected installers in one elevated PowerShell worker. Defaults to
+    enabled for multiple installers and disabled for a single installer.
+    Use -Elevate:$false to retain per-installer elevation.
+
     .EXAMPLE
     Update-DotNetSdk
 
@@ -92,7 +97,9 @@ function Update-DotNetSdk {
         [Alias('AllowPreview')]
         [switch] $IncludePreview,
 
-        [switch] $InteractiveInstaller
+        [switch] $InteractiveInstaller,
+
+        [switch] $Elevate
     )
 
     $originalSecurityProtocol = [Net.ServicePointManager]::SecurityProtocol
@@ -166,14 +173,21 @@ function Update-DotNetSdk {
         $targetVersions += "$($candidate.TargetVersion) ($($candidate.Rid))"
     }
     $targetDescription = $targetVersions -join ', '
+    $elevationParameters = @{}
+    if ($PSBoundParameters.ContainsKey('Elevate')) {
+        $elevationParameters.Elevate = [bool] $Elevate
+    }
     if (-not $PSCmdlet.ShouldProcess(
         ".NET SDK version(s) $targetDescription",
         'Download and install official SDK updates'
     )) {
+        if ($WhatIfPreference) {
+            Show-DotNetElevationPreview @elevationParameters -OperationCount $candidates.Count
+        }
         return
     }
 
-    Invoke-DotNetInstallerPlan -Candidates $candidates `
+    Invoke-DotNetInstallerPlan @elevationParameters -Candidates $candidates `
         -ShowInstallerUi ([bool] $InteractiveInstaller)
     }
     finally {

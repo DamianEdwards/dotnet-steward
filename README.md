@@ -171,6 +171,29 @@ and support installing multiple versions, channels, product types, or
 architectures in one operation. Downloads run in parallel; installers run
 sequentially from lowest to highest version.
 
+Install, update, and uninstall commands request administrator approval once
+for a batch of multiple installer operations, then run them sequentially in
+an elevated PowerShell worker. A single operation retains per-installer
+elevation. Use `-Elevate` to request the worker even for a single operation,
+or `-Elevate:$false` to retain per-installer elevation for a batch:
+
+```powershell
+Install-DotNetRuntime -Channel '8.0', '10.0' -Elevate:$false
+Update-DotNetRuntime -UpdateAll -Elevate:$false
+Uninstall-DotNetSdk -UninstallAll -Elevate:$false
+```
+
+An already-elevated shell does not start another worker or request additional
+approval. Selection and confirmation happen before elevation; `-WhatIf` never
+starts a worker and reports whether the current shell would request approval
+once for a worker, separately for each installer, or not at all because it is
+already elevated. The preview reflects `-Elevate` overrides and the number of
+selected operations; Windows UAC policy determines whether an approval request
+shows a consent or credential dialog. The worker uses the same PowerShell
+edition, revalidates installer trust before execution, and rechecks uninstall
+eligibility against the current registry inventory. Cancelling elevation or a
+failed installer stops the operation; completed operations are not rolled back.
+
 ## Update SDKs
 
 Run interactively, with every available update selected by default:

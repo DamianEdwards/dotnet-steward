@@ -38,6 +38,11 @@ function Update-DotNetRuntime {
     .PARAMETER InteractiveInstaller
     Shows the installer's UI instead of using /install /quiet /norestart.
 
+    .PARAMETER Elevate
+    Runs selected installers in one elevated PowerShell worker. Defaults to
+    enabled for multiple installers and disabled for a single installer.
+    Use -Elevate:$false to retain per-installer elevation.
+
     .EXAMPLE
     Update-DotNetRuntime
 
@@ -85,7 +90,9 @@ function Update-DotNetRuntime {
         [Alias('AllowPreview')]
         [switch] $IncludePreview,
 
-        [switch] $InteractiveInstaller
+        [switch] $InteractiveInstaller,
+
+        [switch] $Elevate
     )
 
     $originalSecurityProtocol = [Net.ServicePointManager]::SecurityProtocol
@@ -165,14 +172,21 @@ function Update-DotNetRuntime {
         foreach ($candidate in $candidates) {
             $targets += "$($candidate.ProductLabel) $($candidate.TargetVersion) ($($candidate.Rid))"
         }
+        $elevationParameters = @{}
+        if ($PSBoundParameters.ContainsKey('Elevate')) {
+            $elevationParameters.Elevate = [bool] $Elevate
+        }
         if (-not $PSCmdlet.ShouldProcess(
             ($targets -join ', '),
             'Download and install official runtime updates'
         )) {
+            if ($WhatIfPreference) {
+                Show-DotNetElevationPreview @elevationParameters -OperationCount $candidates.Count
+            }
             return
         }
 
-        Invoke-DotNetInstallerPlan -Candidates $candidates `
+        Invoke-DotNetInstallerPlan @elevationParameters -Candidates $candidates `
             -ShowInstallerUi ([bool] $InteractiveInstaller)
     }
     finally {
