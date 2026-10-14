@@ -26,6 +26,53 @@ $releaseAssetsScript = Join-Path $repositoryRoot 'scripts\New-ReleaseAssets.ps1'
 $testReleaseAssetsScript = Join-Path $repositoryRoot 'scripts\Test-ReleaseAssets.ps1'
 $releaseSourceScript = Join-Path $repositoryRoot 'scripts\Test-ReleaseSource.ps1'
 $releaseCommitScript = Join-Path $repositoryRoot 'scripts\New-ReleaseCommit.ps1'
+$releaseNotesStartTagScript = Join-Path $repositoryRoot 'scripts\Get-ReleaseNotesStartTag.ps1'
+
+& {
+    function New-TestRelease {
+        param([string] $Tag, [string] $PublishedAt, [bool] $IsDraft = $false)
+
+        [pscustomobject] @{
+            tagName = $Tag
+            publishedAt = $PublishedAt
+            isDraft = $IsDraft
+        }
+    }
+
+    $releases = @(
+        New-TestRelease 'v0.1.0' '2026-09-13T05:39:20Z'
+        New-TestRelease 'v0.3.1' '2026-10-13T23:50:47Z'
+        New-TestRelease 'v0.2.1' '2026-09-25T16:48:56Z'
+        New-TestRelease 'v0.4.0' '' $true
+        New-TestRelease 'v0.3.0' '2026-10-13T22:13:03Z'
+    )
+    $startTag = & $releaseNotesStartTagScript -Tag 'v0.3.1' -Releases $releases
+    Assert-ReleaseCondition ($startTag -eq 'v0.3.0') `
+        'Release notes must start at the most recently published release, excluding drafts and the current release.'
+
+    $releases += New-TestRelease 'v0.4.0-rc1' '2026-10-14T00:00:00Z'
+    $startTag = & $releaseNotesStartTagScript -Tag 'v0.4.0' -Releases $releases
+    Assert-ReleaseCondition ($startTag -eq 'v0.4.0-rc1') `
+        'Release notes must include published prereleases when selecting the previous release.'
+
+    $startTag = & $releaseNotesStartTagScript -Tag 'v0.1.0' -Releases @()
+    Assert-ReleaseCondition ($null -eq $startTag) `
+        'The first release must not specify a notes start tag.'
+    $startTag = & $releaseNotesStartTagScript -Tag 'v0.1.0' -Releases @(
+        New-TestRelease 'v0.1.0' '' $true
+    )
+    Assert-ReleaseCondition ($null -eq $startTag) `
+        'An incomplete first-release draft must not become the notes baseline.'
+
+    $workflow = [IO.File]::ReadAllText(
+        (Join-Path $repositoryRoot '.github\workflows\release.yml')
+    )
+    Assert-ReleaseCondition ($workflow.Contains('--json tagName,isDraft,publishedAt') -and
+        $workflow.Contains('-Tag $tag -Releases $releases') -and
+        $workflow.Contains('NOTES_START_TAG: ${{ steps.context.outputs.notes_start_tag }}') -and
+        $workflow.Contains("@('--notes-start-tag', `$env:NOTES_START_TAG)")) `
+        'The finalizer must pass the explicit previous published tag to GitHub notes generation.'
+}
 
 $bootstrapVersion = & $versionScript
 Assert-ReleaseCondition ($bootstrapVersion.Version -eq '0.1.0') `

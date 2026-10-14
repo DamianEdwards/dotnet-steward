@@ -69,6 +69,12 @@ requested phase.
   creates attestations and the GitHub Release, and publishes the same `.nupkg`
   to PowerShell Gallery.
 
+Generated release notes explicitly compare against the most recently published
+GitHub Release, including prereleases but excluding drafts and the current tag.
+Release-only version commits are not ancestors of later release commits, so
+GitHub's automatic previous-tag selection cannot reliably identify this baseline.
+The first release has no previous-tag override.
+
 Start and finalization share a concurrency group so only one release can
 advance at a time.
 

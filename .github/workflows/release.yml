@@ -110,7 +110,7 @@ jobs:
 
           $releases = @(
               gh release list --repo '${{ github.repository }}' `
-                  --json tagName,isDraft --limit 1000 |
+                  --json tagName,isDraft,publishedAt --limit 1000 |
                   ConvertFrom-Json
           )
           if ($LASTEXITCODE -ne 0) {
@@ -122,7 +122,11 @@ jobs:
           $releaseExists = $null -ne $release -and -not $release.isDraft
           $draftExists = $null -ne $release -and $release.isDraft
 
+          $notesStartTag = .\scripts\Get-ReleaseNotesStartTag.ps1 `
+              -Tag $tag -Releases $releases
+
           "tag=$tag" >> $env:GITHUB_OUTPUT
+          "notes_start_tag=$notesStartTag" >> $env:GITHUB_OUTPUT
           "is_prerelease=$($version.Contains('-').ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "signing_enabled=$($signingEnabled.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "release_exists=$($releaseExists.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
@@ -285,6 +289,7 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          NOTES_START_TAG: ${{ steps.context.outputs.notes_start_tag }}
         run: |
           $arguments = @(
               'release',
@@ -298,6 +303,9 @@ jobs:
               '--generate-notes',
               '--draft'
           )
+          if (-not [string]::IsNullOrWhiteSpace($env:NOTES_START_TAG)) {
+              $arguments += @('--notes-start-tag', $env:NOTES_START_TAG)
+          }
           if ('${{ steps.context.outputs.is_prerelease }}' -eq 'true') {
               $arguments += @('--prerelease', '--latest=false')
           }
