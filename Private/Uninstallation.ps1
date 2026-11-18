@@ -22,9 +22,25 @@ function Get-DotNetUninstallExecutable {
     }
 
     $fileName = [IO.Path]::GetFileName($path)
-    if ($fileName -notmatch '(?i)^(?:dotnet-sdk|dotnet-runtime|aspnetcore-runtime|windowsdesktop-runtime)-\d+\.\d+\.\d+(?:-[0-9a-z.-]+)?-win-(?:x64|x86|arm64)\.exe$' -and
-        $fileName -notmatch '(?i)^dotnet-(?:dev-)?win-(?:x64|x86)\.\d+\.\d+\.\d+(?:-[0-9a-z.-]+)?\.exe$') {
+    if ($fileName -match '(?i)^AspNetCoreSharedFrameworkBundle-(?<architecture>x64|x86|arm64)\.exe$') {
+        $expectedProductType = 'AspNetCoreRuntime'
+    }
+    elseif ($fileName -match '(?i)^(?<product>dotnet-sdk|dotnet-runtime|aspnetcore-runtime|windowsdesktop-runtime)-\d+\.\d+\.\d+(?:-[0-9a-z.-]+)?-win-(?:x64|x86|arm64)\.exe$') {
+        $expectedProductType = switch ($Matches.product.ToLowerInvariant()) {
+            'dotnet-sdk' { 'Sdk' }
+            'dotnet-runtime' { 'Runtime' }
+            'aspnetcore-runtime' { 'AspNetCoreRuntime' }
+            'windowsdesktop-runtime' { 'WindowsDesktopRuntime' }
+        }
+    }
+    elseif ($fileName -match '(?i)^dotnet-(?<dev>dev-)?win-(?:x64|x86)\.\d+\.\d+\.\d+(?:-[0-9a-z.-]+)?\.exe$') {
+        $expectedProductType = if ($Matches.ContainsKey('dev')) { 'Sdk' } else { 'Runtime' }
+    }
+    else {
         throw "The cached uninstall executable does not have a recognized .NET bundle name: '$fileName'."
+    }
+    if ($expectedProductType -ne $Installation.ProductType) {
+        throw "The cached uninstall executable does not match $($Installation.DisplayName). No uninstall was attempted."
     }
     $executableIdentity = Get-DotNetBundleIdentity -DisplayName $Installation.DisplayName `
         -BundleCachePath $path -UninstallString ''

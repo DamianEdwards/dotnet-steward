@@ -29,7 +29,8 @@ function Get-DotNetProductType {
     }
 
     if ($DisplayName.IndexOf('.NET Core Runtime', [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
-        $DisplayName.IndexOf('Microsoft .NET Runtime', [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        $DisplayName.IndexOf('Microsoft .NET Runtime', [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+        $DisplayName -match '(?i)\.NET Core \d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\s+-\s+Runtime\b') {
         return 'Runtime'
     }
 
@@ -80,6 +81,7 @@ function Get-DotNetBundleIdentity {
 
     $version = $null
     $architecture = $null
+    $aspNetCacheName = $false
     $identityText = "$BundleCachePath`n$UninstallString"
     if ($identityText -match '(?i)(?:dotnet-sdk|dotnet-runtime|aspnetcore-runtime|windowsdesktop-runtime)-(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)-win-(?<architecture>x64|x86|arm64)\.exe') {
         $version = $Matches.version
@@ -88,6 +90,20 @@ function Get-DotNetBundleIdentity {
     elseif ($identityText -match '(?i)dotnet-(?:dev-)?win-(?<architecture>x64|x86)\.(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\.exe') {
         $version = $Matches.version
         $architecture = $Matches.architecture.ToLowerInvariant()
+    }
+    elseif ($identityText -match '(?i)(?:^|\\)AspNetCoreSharedFrameworkBundle-(?<architecture>x64|x86|arm64)\.exe(?=["\s]|$)') {
+        $architecture = $Matches.architecture.ToLowerInvariant()
+        $aspNetCacheName = $true
+    }
+
+    if ($aspNetCacheName) {
+        if ($productType -ne 'AspNetCoreRuntime') {
+            return $null
+        }
+        if ($DisplayName -match '(?i)\((?<architecture>x64|x86|arm64)\)' -and
+            $Matches.architecture -ine $architecture) {
+            return $null
+        }
     }
 
     if ([string]::IsNullOrWhiteSpace($version)) {

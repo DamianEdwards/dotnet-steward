@@ -1249,6 +1249,229 @@ foreach ($propertyName in @('WhatIfSafe', 'Declined', 'Confirmed', 'Forced',
     Assert-Condition $uninstallCheck.$propertyName "Uninstall check '$propertyName' failed."
 }
 
+Write-Host 'Checking cached bundle names and ASP.NET Core uninstalls...'
+$aspNetCacheChecks = & $module {
+    $script:AspNetInventory = @()
+    $script:AspNetSignatures = @()
+    $script:AspNetStarts = @()
+    $script:AspNetSignatureValid = $true
+    function Test-DotNetAdministrator { return $true }
+    function Get-DotNetInstallationInventory { return $script:AspNetInventory }
+    function Assert-InstallerSignature {
+        param($InstallerPath, $ProductLabel, $Version)
+        $script:AspNetSignatures += [pscustomobject] @{
+            Path = $InstallerPath; Product = $ProductLabel; Version = $Version
+        }
+        if (-not $script:AspNetSignatureValid) { throw 'Invalid installer signature.' }
+    }
+    function Start-Process {
+        param($FilePath, $ArgumentList, $Verb, [switch] $Wait, [switch] $PassThru)
+        $script:AspNetStarts += [pscustomobject] @{
+            Path = $FilePath; Arguments = @($ArgumentList); Verb = $Verb
+        }
+        return [pscustomobject] @{ ExitCode = 0 }
+    }
+    function Test-AspNetCachePathRejected {
+        param($Installation, $MessagePattern)
+        try {
+            [void] (Get-DotNetUninstallExecutable -Installation $Installation)
+            return $false
+        }
+        catch {
+            return $_.Exception.Message -match $MessagePattern
+        }
+    }
+
+    $directory = Join-Path ([IO.Path]::GetTempPath()) `
+        ('dotnet-steward-aspnet-cache-' + [guid]::NewGuid().ToString('N'))
+    [void] (New-Item -Path $directory -ItemType Directory)
+    try {
+        $accepted = $true
+        $installations = @{}
+        foreach ($case in @(
+            @{ Architecture = 'x64'; Version = '7.0.7' }
+            @{ Architecture = 'x86'; Version = '8.0.33' }
+            @{ Architecture = 'arm64'; Version = '9.0.22' }
+        )) {
+            $architecture = $case.Architecture
+            $version = $case.Version
+            $path = Join-Path $directory "AspNetCoreSharedFrameworkBundle-$architecture.exe"
+            [void] (New-Item -Path $path -ItemType File)
+            $installation = [pscustomobject] @{
+                ProductType = 'AspNetCoreRuntime'; Version = $version
+                VersionInfo = New-SdkVersionInfo -Text $version
+                Architecture = $architecture; Rid = "win-$architecture"
+                InstallerKind = 'Bundle'; IsUninstallable = $true
+                DisplayName = "Microsoft ASP.NET Core $version - Shared Framework ($architecture)"
+                BundleCachePath = if ($architecture -eq 'x86') { '' } else { $path }
+                UninstallString = "`"$path`" /uninstall"
+                RegistryView = 'Registry32'; RegistrySubkey = "test\$architecture"; BundleId = $architecture
+            }
+            $installations[$architecture] = $installation
+            $script:AspNetInventory = @($installation)
+            $startsBefore = $script:AspNetStarts.Count
+            $signaturesBefore = $script:AspNetSignatures.Count
+            Uninstall-DotNetRuntime -ProductType AspNetCoreRuntime -Architecture $architecture `
+                -UninstallAll -Force -InstallerMode Quiet -Confirm:$false
+            $accepted = $accepted -and
+                $script:AspNetStarts.Count -eq ($startsBefore + 1) -and
+                $script:AspNetSignatures.Count -eq ($signaturesBefore + 1) -and
+                $script:AspNetStarts[-1].Path -eq $path -and
+                $script:AspNetStarts[-1].Verb -eq 'RunAs' -and
+                ($script:AspNetStarts[-1].Arguments -join ' ') -eq '/uninstall /quiet /norestart' -and
+                $script:AspNetSignatures[-1].Path -eq $path -and
+                $script:AspNetSignatures[-1].Product -eq 'AspNetCoreRuntime' -and
+                $script:AspNetSignatures[-1].Version -eq $version
+        }
+
+        $unversionedPath = Join-Path $directory 'AspNetCoreSharedFrameworkBundle-x86.exe'
+        $unversionedDisplay = 'Microsoft ASP.NET Core 2.2.6 - Shared Framework'
+        $unversionedIdentity = Get-DotNetBundleIdentity -DisplayName $unversionedDisplay `
+            -BundleCachePath '' -UninstallString "`"$unversionedPath`" /uninstall"
+        if ($null -eq $unversionedIdentity) {
+            throw 'Could not identify an ASP.NET Core bundle from its uninstall string.'
+        }
+        $unversionedAccepted = $null -ne $unversionedIdentity -and
+            $unversionedIdentity.ProductType -eq 'AspNetCoreRuntime' -and
+            $unversionedIdentity.Version -eq '2.2.6' -and $unversionedIdentity.Architecture -eq 'x86'
+        $unversionedInstallation = [pscustomobject] @{
+            ProductType = $unversionedIdentity.ProductType; Version = $unversionedIdentity.Version
+            VersionInfo = New-SdkVersionInfo -Text $unversionedIdentity.Version
+            Architecture = $unversionedIdentity.Architecture; Rid = $unversionedIdentity.Rid
+            InstallerKind = 'Bundle'; IsUninstallable = $true
+            DisplayName = $unversionedDisplay; BundleCachePath = ''; UninstallString = "`"$unversionedPath`" /uninstall"
+        }
+        $script:AspNetInventory = @($unversionedInstallation)
+        $startsBefore = $script:AspNetStarts.Count
+        $signaturesBefore = $script:AspNetSignatures.Count
+        Uninstall-DotNetRuntime -ProductType AspNetCoreRuntime -UninstallAll -Force -Confirm:$false
+        $unversionedAccepted = $unversionedAccepted -and
+            $script:AspNetStarts.Count -eq ($startsBefore + 1) -and
+            $script:AspNetSignatures.Count -eq ($signaturesBefore + 1) -and
+            $script:AspNetStarts[-1].Path -eq $unversionedPath
+        $conflictingDisplay = Get-DotNetBundleIdentity `
+            -DisplayName 'Microsoft ASP.NET Core 2.2.6 - Shared Framework (x64)' `
+            -BundleCachePath $unversionedPath -UninstallString ''
+
+        $otherBundleNamesAccepted = $true
+        $otherProductMismatchesRefused = $true
+        foreach ($case in @(
+            @{ Name = 'dotnet-sdk-8.0.100-win-x64.exe'; DisplayName = 'Microsoft .NET SDK 8.0.100 (x64)'; Product = 'Sdk'; Version = '8.0.100' }
+            @{ Name = 'dotnet-runtime-8.0.0-win-x64.exe'; DisplayName = 'Microsoft .NET Runtime 8.0.0 (x64)'; Product = 'Runtime'; Version = '8.0.0' }
+            @{ Name = 'aspnetcore-runtime-8.0.0-win-x64.exe'; DisplayName = 'Microsoft ASP.NET Core 8.0.0 - Shared Framework (x64)'; Product = 'AspNetCoreRuntime'; Version = '8.0.0' }
+            @{ Name = 'windowsdesktop-runtime-8.0.0-win-x64.exe'; DisplayName = 'Microsoft Windows Desktop Runtime - 8.0.0 (x64)'; Product = 'WindowsDesktopRuntime'; Version = '8.0.0' }
+            @{ Name = 'dotnet-dev-win-x64.1.1.10.exe'; DisplayName = '.NET Core SDK 1.1.10 (x64)'; Product = 'Sdk'; Version = '1.1.10' }
+            @{ Name = 'dotnet-win-x64.1.1.13.exe'; DisplayName = 'Microsoft .NET Core 1.1.13 - Runtime (x64)'; Product = 'Runtime'; Version = '1.1.13' }
+        )) {
+            $path = Join-Path $directory $case.Name
+            [void] (New-Item -Path $path -ItemType File)
+            $identity = Get-DotNetBundleIdentity -DisplayName $case.DisplayName `
+                -BundleCachePath $path -UninstallString ''
+            if ($null -eq $identity) {
+                throw "Could not identify .NET bundle '$($case.Name)'."
+            }
+            $installation = [pscustomobject] @{
+                ProductType = $identity.ProductType; Version = $identity.Version
+                Architecture = $identity.Architecture; DisplayName = $case.DisplayName
+                BundleCachePath = $path; UninstallString = ''
+            }
+            $otherBundleNamesAccepted = $otherBundleNamesAccepted -and
+                $identity.ProductType -eq $case.Product -and $identity.Version -eq $case.Version -and
+                (Get-DotNetUninstallExecutable -Installation $installation) -eq $path
+            $installation.ProductType = if ($case.Product -eq 'Sdk') { 'Runtime' } else { 'Sdk' }
+            $installation.DisplayName = if ($case.Product -eq 'Sdk') {
+                "Microsoft .NET Runtime $($case.Version) (x64)"
+            } else {
+                "Microsoft .NET SDK $($case.Version) (x64)"
+            }
+            $otherProductMismatchesRefused = $otherProductMismatchesRefused -and
+                (Test-AspNetCachePathRejected $installation 'does not match')
+        }
+
+        $installation = $installations['x64']
+        $originalPath = $installation.BundleCachePath
+        $installation.BundleCachePath = Join-Path $directory 'AspNetCoreSharedFrameworkBundle-x86.exe'
+        $wrongArchitecture = Test-AspNetCachePathRejected $installation 'does not match'
+        $installation.BundleCachePath = $originalPath
+        $originalDisplayName = $installation.DisplayName
+        $installation.ProductType = 'Runtime'
+        $installation.DisplayName = 'Microsoft .NET Runtime 7.0.7 (x64)'
+        $wrongProduct = Test-AspNetCachePathRejected $installation 'does not match'
+        $installation.ProductType = 'AspNetCoreRuntime'
+        $installation.DisplayName = $originalDisplayName
+        $installation.Version = '7.0.8'
+        $wrongVersion = Test-AspNetCachePathRejected $installation 'does not match'
+        $installation.Version = '7.0.7'
+        $invalidPath = Join-Path $directory 'AspNetCoreSharedFrameworkBundle-x64-extra.exe'
+        [void] (New-Item -Path $invalidPath -ItemType File)
+        $installation.BundleCachePath = $invalidPath
+        $unrecognizedName = Test-AspNetCachePathRejected $installation 'recognized .NET bundle name'
+        $otherProductsRefused = $true
+        foreach ($name in @('AspNetCore.2.0.9.RuntimePackageStore_x64.exe', 'DotNetCore.2.0.9-WindowsHosting.exe')) {
+            $path = Join-Path $directory $name
+            [void] (New-Item -Path $path -ItemType File)
+            $installation.BundleCachePath = $path
+            $otherProductsRefused = $otherProductsRefused -and
+                (Test-AspNetCachePathRejected $installation 'recognized .NET bundle name')
+        }
+        $installation.BundleCachePath = $originalPath
+
+        $script:AspNetInventory = @($installation)
+        $script:AspNetSignatureValid = $false
+        $startsBefore = $script:AspNetStarts.Count
+        $signatureRefused = $false
+        try {
+            Uninstall-DotNetRuntime -ProductType AspNetCoreRuntime -UninstallAll -Force -Confirm:$false
+        }
+        catch {
+            $signatureRefused = $_.Exception.Message -eq 'Invalid installer signature.' -and
+                $script:AspNetStarts.Count -eq $startsBefore
+        }
+
+        $planPath = Join-Path $directory 'plan.clixml'
+        $resultPath = Join-Path $directory 'result.clixml'
+        [pscustomobject] @{
+            Action = 'Uninstall'; Items = @($installation); InstallerMode = 'Quiet'
+        } | Export-Clixml -LiteralPath $planPath
+        $script:AspNetSignatureValid = $true
+        $startsBefore = $script:AspNetStarts.Count
+        $signaturesBefore = $script:AspNetSignatures.Count
+        $code = Invoke-DotNetElevationWorker -PlanPath $planPath -ResultPath $resultPath
+        $result = Import-Clixml -LiteralPath $resultPath
+        $workerAccepted = $code -eq 0 -and $result.Succeeded -and
+            $script:AspNetStarts.Count -eq ($startsBefore + 1) -and
+            $script:AspNetSignatures.Count -eq ($signaturesBefore + 1) -and
+            $script:AspNetStarts[-1].Path -eq $originalPath
+
+        $script:AspNetSignatureValid = $false
+        $startsBefore = $script:AspNetStarts.Count
+        $code = Invoke-DotNetElevationWorker -PlanPath $planPath -ResultPath $resultPath 2>$null
+        $result = Import-Clixml -LiteralPath $resultPath
+        $workerSignatureRefused = $code -eq 1 -and -not $result.Succeeded -and
+            $result.Error -eq 'Invalid installer signature.' -and $script:AspNetStarts.Count -eq $startsBefore
+
+        [pscustomobject] @{
+            Accepted = $accepted; WrongArchitecture = $wrongArchitecture; WrongProduct = $wrongProduct
+            WrongVersion = $wrongVersion; UnrecognizedName = $unrecognizedName
+            SignatureRefused = $signatureRefused; WorkerAccepted = $workerAccepted
+            WorkerSignatureRefused = $workerSignatureRefused
+            UnversionedAccepted = $unversionedAccepted; ConflictingDisplayRefused = $null -eq $conflictingDisplay
+            OtherProductsRefused = $otherProductsRefused
+            OtherBundleNamesAccepted = $otherBundleNamesAccepted
+            OtherProductMismatchesRefused = $otherProductMismatchesRefused
+        }
+    }
+    finally {
+        Remove-Item -LiteralPath $directory -Recurse -Force
+    }
+}
+foreach ($propertyName in @('Accepted', 'WrongArchitecture', 'WrongProduct', 'WrongVersion',
+    'UnrecognizedName', 'SignatureRefused', 'WorkerAccepted', 'WorkerSignatureRefused',
+    'UnversionedAccepted', 'ConflictingDisplayRefused', 'OtherProductsRefused',
+    'OtherBundleNamesAccepted', 'OtherProductMismatchesRefused')) {
+    Assert-Condition $aspNetCacheChecks.$propertyName "ASP.NET Core cached bundle check '$propertyName' failed."
+}
+
 Write-Host 'Checking batch elevation and explicit overrides...'
 $elevationChecks = & $module {
     $script:Administrator = $false
