@@ -271,9 +271,13 @@ Interactive checklists start with nothing selected. `-VersionBand` and
 without prompting or uninstalling. `-Confirm` uses PowerShell's additional
 ShouldProcess confirmation. Uninstallation runs the locally cached, signed
 Microsoft bundle with `/uninstall /passive /norestart` by default and may
-request UAC approval. If the cached installer is missing, the command fails without
-attempting that uninstall. Shared MSI payloads and Visual Studio-managed
-installations are not eligible. No internet connection is required to uninstall.
+request UAC approval. ASP.NET Core cache names such as
+`AspNetCoreSharedFrameworkBundle-x64.exe` are supported when their identity
+matches the selected installation. If the cached installer is missing, the
+command fails without attempting that uninstall. Shared MSI payloads and Visual
+Studio-managed installations are not eligible. No internet connection is required
+to uninstall. Windows Hosting and the historical ASP.NET Core Runtime Package
+Store are separate products and are not supported.
 
 ## Preview releases
 
